@@ -1,0 +1,95 @@
+name: noroshi-e2e
+
+# noroshi shares the authentik-server network namespace so that
+# http://localhost:9000 is the same issuer for the browser and for noroshi.
+services:
+  postgres:
+    image: docker.io/library/postgres:18-alpine
+    environment:
+      POSTGRES_PASSWORD: dev
+    volumes:
+      - ./e2e/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U postgres
+      interval: 5s
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2026.8
+    command: server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./e2e/authentik.env
+    volumes:
+      - ./e2e/blueprints:/blueprints/noroshi:ro
+    networks:
+      default:
+        aliases:
+          - noroshi
+    ports:
+      - 127.0.0.1:9000:9000
+      - 127.0.0.1:28080:8080
+      - 127.0.0.1:28081:8081
+      - 127.0.0.1:28082:8082
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2026.8
+    command: worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./e2e/authentik.env
+    volumes:
+      - ./e2e/blueprints:/blueprints/noroshi:ro
+
+  noroshi:
+    build:
+      context: ../..
+    image: noroshi:dev
+    network_mode: service:authentik-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      authentik-server:
+        condition: service_started
+    environment:
+      NOROSHI_DATABASE_URL: postgres://noroshi:dev@postgres:5432/noroshi?sslmode=disable
+      NOROSHI_BASE_URL: http://localhost:28080
+      NOROSHI_ADMIN_URL: http://localhost:28081
+      NOROSHI_OIDC_ISSUER: http://localhost:9000/application/o/noroshi/
+      NOROSHI_OIDC_CLIENT_ID: noroshi
+      NOROSHI_OIDC_CLIENT_SECRET: e2e-client-secret
+      NOROSHI_SESSION_KEY: e2e-session-key-0123456789abcdef0123
+      NOROSHI_WEBHOOK_DISCORD: ${NOROSHI_E2E_DISCORD_URL:-http://webhook-sink:8000/discord}
+      NOROSHI_WEBHOOK_TEAMS: ${NOROSHI_E2E_TEAMS_URL:-http://webhook-sink:8000/teams}
+      TZ: Asia/Seoul
+    volumes:
+      - ../config.demo.yaml:/etc/noroshi/config.yaml:ro
+    healthcheck:
+      test:
+        - CMD
+        - /noroshi
+        - healthcheck
+      interval: 10s
+
+  webhook-sink:
+    image: docker.io/library/python:3.13-alpine
+    command:
+      - python
+      - /sink.py
+    volumes:
+      - ./webhook-sink.py:/sink.py:ro
+    ports:
+      - 127.0.0.1:28090:8000
+
+  prometheus:
+    image: docker.io/prom/prometheus:v3.5.0
+    volumes:
+      - ./e2e/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/rules.yaml:/etc/prometheus/rules/noroshi.yaml:ro
+    ports:
+      - 127.0.0.1:29090:9090

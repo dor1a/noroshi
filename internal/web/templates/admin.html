@@ -1,0 +1,240 @@
+{{define "admin_top" -}}
+<header class="mast">
+  <a class="title" href="/admin">{{t .Locale "admin.title"}}</a>
+  <nav class="nav">
+    <a href="/admin"{{if eq .Section "checks"}} aria-current="page"{{end}}>{{t .Locale "admin.nav_checks"}}</a>
+    <a href="/admin/incidents"{{if eq .Section "incidents"}} aria-current="page"{{end}}>{{t .Locale "admin.nav_incidents"}}</a>
+    <span>{{t .Locale "admin.signed_in"}} {{.UserName}}</span>
+    {{if not .Dev}}<a href="/logout">{{t .Locale "admin.logout"}}</a>{{end}}
+    {{template "lang" .}}
+  </nav>
+</header>
+{{if .Dev}}<p class="notice warn">{{t .Locale "admin.dev_mode"}}</p>{{end}}
+<p class="notice">{{.ProberLine}}</p>
+{{- end}}
+
+{{define "admin_state" -}}
+<span class="cs cs-{{.StateKey}}"><span class="glyph" aria-hidden="true">{{stateGlyph .StateKey}}</span>{{.StateLabel}}</span>
+{{- if .Slow}} <span class="cs cs-slow"><span class="glyph" aria-hidden="true">{{stateGlyph "slow"}}</span>{{.SlowLabel}}</span>{{end}}
+{{- end}}
+
+{{define "admin" -}}
+{{template "head" .}}
+<main class="sheet wide">
+  {{template "admin_top" .}}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>{{t .Locale "admin.component"}}</th>
+          <th>{{t .Locale "admin.check"}}</th>
+          <th>{{t .Locale "admin.target"}}</th>
+          <th>{{t .Locale "admin.state"}}</th>
+          <th>{{t .Locale "admin.since"}}</th>
+          <th>{{t .Locale "admin.last_run"}}</th>
+          <th>{{t .Locale "admin.latency"}}</th>
+          <th>{{t .Locale "admin.detail"}}</th>
+          <th>{{t .Locale "admin.expiry"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Rows}}
+        <tr>
+          <td{{if eq .StateKey "down"}} class="cell-down"{{end}}>{{.Component}}<span class="sub">{{.Page}}</span></td>
+          <td><a href="/admin/checks/{{.ID}}">{{.Key}}</a><span class="sub mono">{{.Type}}</span></td>
+          <td class="target">{{.Target}}</td>
+          <td>{{template "admin_state" .}}<span class="sub">{{.Streak}}</span></td>
+          <td class="num">{{.Since}}</td>
+          <td class="num">{{.LastRun}}</td>
+          <td class="num">{{.Latency}}</td>
+          <td class="{{.ResultClass}}">{{.Result}}</td>
+          <td class="{{.ExpiryClass}}">{{.Expiry}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</main>
+{{template "foot" .}}
+{{- end}}
+
+{{define "admin_check" -}}
+{{template "head" .}}
+<main class="sheet wide">
+  {{template "admin_top" .}}
+  <p class="back"><a href="/admin">{{t .Locale "admin.back"}}</a></p>
+  <dl class="meta">
+    <dt>{{t .Locale "admin.page"}}</dt><dd>{{.Row.Page}}</dd>
+    <dt>{{t .Locale "admin.component"}}</dt><dd>{{.Row.Component}}</dd>
+    <dt>{{t .Locale "admin.check"}}</dt><dd class="mono">{{.Row.Key}} ({{.Row.Type}})</dd>
+    <dt>{{t .Locale "admin.target"}}</dt><dd class="mono">{{.Row.Target}}</dd>
+    <dt>{{t .Locale "admin.interval"}}</dt><dd class="mono">{{.Interval}}</dd>
+    <dt>{{t .Locale "admin.timeout"}}</dt><dd class="mono">{{.Timeout}}</dd>
+    <dt>{{t .Locale "admin.thresholds"}}</dt><dd>{{.Thresholds}}</dd>
+    <dt>{{t .Locale "admin.state"}}</dt><dd>{{template "admin_state" .Row}} <span class="t-muted">{{.Row.Streak}}</span></dd>
+    <dt>{{t .Locale "admin.since"}}</dt><dd class="mono">{{.Row.Since}}</dd>
+    <dt>{{t .Locale "admin.expiry"}}</dt><dd class="{{.Row.ExpiryClass}}">{{.Row.Expiry}}</dd>
+  </dl>
+  <h2 class="section-title">{{t .Locale "admin.recent"}}</h2>
+  {{if .Results}}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>{{t .Locale "admin.last_run"}}</th>
+          <th>{{t .Locale "admin.state"}}</th>
+          <th>{{t .Locale "admin.latency"}}</th>
+          <th>{{t .Locale "admin.detail"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Results}}
+        <tr>
+          <td class="num">{{.At}}</td>
+          <td><span class="cs cs-{{.Class}}"><span class="glyph" aria-hidden="true">{{stateGlyph .Class}}</span>{{.Label}}</span></td>
+          <td class="num">{{.Latency}}</td>
+          <td>{{.Detail}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <p class="notice">{{t .Locale "admin.no_results"}}</p>
+  {{end}}
+</main>
+{{template "foot" .}}
+{{- end}}
+
+{{define "admin_incidents" -}}
+{{template "head" .}}
+<main class="sheet wide">
+  {{template "admin_top" .}}
+  <div class="toolbar">
+    {{range .New}}<a class="button" href="{{.Href}}">{{.Label}}</a>{{end}}
+  </div>
+  <h2 class="section-title">{{t .Locale "admin.incident_open"}}</h2>
+  {{template "incident_table" (incidentTable .Locale .Open)}}
+  <h2 class="section-title">{{tf .Locale "admin.incident_recent" .RecentDays}}</h2>
+  {{template "incident_table" (incidentTable .Locale .Recent)}}
+</main>
+{{template "foot" .}}
+{{- end}}
+
+{{define "incident_table" -}}
+{{if .Rows}}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>{{t .Locale "admin.incident_title"}}</th>
+        <th>{{t .Locale "admin.incident_stage"}}</th>
+        <th>{{t .Locale "incident.affected"}}</th>
+        <th>{{t .Locale "incident.started"}}</th>
+        <th>{{t .Locale "incident.ended"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr>
+        <td class="tone-cell it-{{.Tone}}"><a href="/admin/incidents/{{.ID}}">{{.Title}}</a><span class="sub">{{.Page}}</span></td>
+        <td><span class="stage-tag st-{{.StageKey}}">{{.StageLabel}}</span></td>
+        <td>{{.Affected}}</td>
+        <td class="num">{{.Started}}</td>
+        <td class="num">{{.Resolved}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{else}}
+<p class="notice">{{t .Locale "admin.incident_none"}}</p>
+{{end}}
+{{- end}}
+
+{{define "incident_form" -}}
+<form class="form" method="post" action="{{.Action}}">
+  {{range .Form.Errors}}<p class="notice bad">{{.}}</p>{{end}}
+  {{if .Create}}
+  <input type="hidden" name="page" value="{{.PageKey}}">
+  <label class="field">
+    <span class="label">{{t .Locale "admin.incident_title"}}</span>
+    <input type="text" name="title" value="{{.Form.Title}}" maxlength="200" required>
+  </label>
+  {{end}}
+  {{if .Resolved}}
+  <p class="notice">{{t .Locale "admin.incident_resolved_note"}}</p>
+  {{else}}
+  <fieldset class="field">
+    <legend class="label">{{t .Locale "admin.incident_stage"}}</legend>
+    <div class="choices">
+      {{range .Stages}}<label class="choice"><input type="radio" name="stage" value="{{.Key}}"{{if eq .Key $.Form.Stage}} checked{{end}}> {{.Label}}</label>{{end}}
+    </div>
+  </fieldset>
+  {{if .Components}}
+  <fieldset class="field">
+    <legend class="label">{{t .Locale "admin.incident_components"}}</legend>
+    <p class="hint">{{t .Locale "admin.incident_components_tip"}}</p>
+    <div class="comp-grid">
+      {{range .Components}}
+      <label class="comp">
+        <span class="comp-name">{{.Name}}<span class="sub">{{.Group}}</span></span>
+        <select name="c{{.ID}}">
+          <option value="">{{t $.Locale "admin.incident_unaffected"}}</option>
+          {{- $cur := .Current}}
+          {{- range $.Statuses}}
+          <option value="{{.Key}}"{{if eq .Key $cur}} selected{{end}}>{{.Glyph}} {{.Label}}</option>
+          {{- end}}
+        </select>
+      </label>
+      {{end}}
+    </div>
+  </fieldset>
+  {{end}}
+  {{end}}
+  <label class="field">
+    <span class="label">{{t .Locale "admin.incident_body"}}</span>
+    <textarea name="body" rows="6" maxlength="5000" required>{{.Form.Body}}</textarea>
+  </label>
+  {{if .NotifyNames}}
+  <label class="choice"><input type="checkbox" name="notify" value="1"{{if .Form.Notify}} checked{{end}}> {{tf .Locale "admin.incident_notify" .NotifyNames}}</label>
+  {{else}}
+  <p class="hint">{{t .Locale "admin.incident_no_notifiers"}}</p>
+  {{end}}
+  <div><button type="submit" class="button primary">{{.Submit}}</button></div>
+</form>
+{{- end}}
+
+{{define "admin_incident_new" -}}
+{{template "head" .}}
+<main class="sheet wide">
+  {{template "admin_top" .}}
+  <p class="back"><a href="/admin/incidents">{{t .Locale "admin.incident_back"}}</a></p>
+  <h2 class="section-title">{{tf .Locale "admin.incident_new_for" .PageTitle}}</h2>
+  {{template "incident_form" .FormView}}
+</main>
+{{template "foot" .}}
+{{- end}}
+
+{{define "admin_incident" -}}
+{{template "head" .}}
+<main class="sheet wide">
+  {{template "admin_top" .}}
+  <p class="back"><a href="/admin/incidents">{{t .Locale "admin.incident_back"}}</a>{{with .PublicURL}} · <a href="{{.}}">{{t $.Locale "admin.incident_public"}}</a>{{end}}</p>
+  <div class="split">
+    <div>{{template "incident_card" .Inc}}</div>
+    <section class="split-side">
+      <h2 class="section-title">{{t .Locale "admin.incident_add_update"}}</h2>
+      {{template "incident_form" .FormView}}
+      <details class="danger">
+        <summary>{{t .Locale "admin.incident_delete"}}</summary>
+        <form method="post" action="/admin/incidents/{{.Inc.ID}}/delete" class="form">
+          <label class="choice"><input type="checkbox" name="confirm" value="1" required> {{t .Locale "admin.incident_delete_confirm"}}</label>
+          <div><button type="submit" class="button danger">{{t .Locale "admin.incident_delete"}}</button></div>
+        </form>
+      </details>
+    </section>
+  </div>
+</main>
+{{template "foot" .}}
+{{- end}}

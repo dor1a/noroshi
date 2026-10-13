@@ -1,0 +1,63 @@
+defaults:
+  interval: 60s
+  timeout: 10s
+  fail_threshold: 3
+  recover_threshold: 2
+  warn_before: 30d
+
+notifiers:
+  - key: teams
+    type: teams
+    url_env: NOROSHI_WEBHOOK_TEAMS
+    locale: ko
+
+pages:
+  - key: home
+    title:
+      ko: 서비스 상태
+      en: Service Status
+    timezone: Asia/Seoul
+    notify:
+      - teams
+    groups:
+      - key: public
+        name:
+          ko: 공개 서비스
+          en: Public services
+        components:
+          - key: website
+            name:
+              ko: 웹사이트
+              en: Website
+            description:
+              ko: 메인 웹사이트
+              en: Main website
+            checks:
+              - key: https
+                type: http
+                url: https://example.com/
+                keyword: Example Domain
+                slow_after: 3s
+              - key: domain
+                type: domain_expiry
+                domain: example.com
+          - key: tls-endpoint
+            name: TLS endpoint
+            checks:
+              - key: handshake
+                type: tls
+                address: example.com:443
+      - key: internal
+        name:
+          ko: 내부 서비스
+          en: Internal services
+        components:
+          - key: database
+            name:
+              ko: 데이터베이스
+              en: Database
+            checks:
+              - key: port
+                type: tcp
+                address: db.internal.example:5432
+                interval: 30s

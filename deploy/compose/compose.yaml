@@ -1,0 +1,67 @@
+name: noroshi
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: noroshi
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_DB: noroshi
+    secrets:
+      - db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U noroshi
+      interval: 10s
+
+  noroshi:
+    image: noroshi:dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NOROSHI_CONFIG: /etc/noroshi/config.yaml
+      NOROSHI_DATABASE_URL_FILE: /run/secrets/database_url
+      NOROSHI_BASE_URL: https://status.example.com
+      NOROSHI_ADMIN_URL: https://status-admin.example.com
+      NOROSHI_OIDC_ISSUER: https://sso.example.com/application/o/noroshi/
+      NOROSHI_OIDC_CLIENT_ID: noroshi
+      NOROSHI_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
+      NOROSHI_OIDC_ADMIN_GROUP: noroshi-admins
+      NOROSHI_SESSION_KEY_FILE: /run/secrets/session_key
+      NOROSHI_WEBHOOK_TEAMS_FILE: /run/secrets/webhook_teams
+      TZ: Asia/Seoul
+    secrets:
+      - database_url
+      - oidc_client_secret
+      - session_key
+      - webhook_teams
+    volumes:
+      - ../config.example.yaml:/etc/noroshi/config.yaml:ro
+    ports:
+      - 8080:8080
+      - 8081:8081
+    healthcheck:
+      test:
+        - CMD
+        - /noroshi
+        - healthcheck
+      interval: 30s
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  database_url:
+    file: ./secrets/database_url
+  oidc_client_secret:
+    file: ./secrets/oidc_client_secret
+  session_key:
+    file: ./secrets/session_key
+  webhook_teams:
+    file: ./secrets/webhook_teams
+
+volumes:
+  pgdata:

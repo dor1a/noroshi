@@ -1,0 +1,45 @@
+name: noroshi-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: noroshi
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: noroshi
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U noroshi
+      interval: 5s
+
+  noroshi:
+    build:
+      context: ../..
+    image: noroshi:dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NOROSHI_DATABASE_URL: postgres://noroshi:dev@postgres:5432/noroshi?sslmode=disable
+      NOROSHI_DEV_NO_AUTH: "true"
+      NOROSHI_BASE_URL: http://localhost:18080
+      NOROSHI_WEBHOOK_DISCORD: ${NOROSHI_DEV_DISCORD_URL:-http://webhook-sink:8000/discord}
+      NOROSHI_WEBHOOK_TEAMS: ${NOROSHI_DEV_TEAMS_URL:-http://webhook-sink:8000/teams}
+      TZ: Asia/Seoul
+    volumes:
+      - ../config.demo.yaml:/etc/noroshi/config.yaml:ro
+    ports:
+      - 127.0.0.1:18080:8080
+      - 127.0.0.1:18081:8081
+      - 127.0.0.1:18082:8082
+
+  webhook-sink:
+    image: docker.io/library/python:3.13-alpine
+    command:
+      - python
+      - /sink.py
+    volumes:
+      - ./webhook-sink.py:/sink.py:ro
+    ports:
+      - 127.0.0.1:18090:8000

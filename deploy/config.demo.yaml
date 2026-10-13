@@ -1,0 +1,75 @@
+defaults:
+  interval: 10s
+  timeout: 5s
+
+notifiers:
+  - key: discord
+    type: discord
+    url_env: NOROSHI_WEBHOOK_DISCORD
+  - key: teams
+    type: teams
+    url_env: NOROSHI_WEBHOOK_TEAMS
+    locale: ko
+
+pages:
+  - key: demo
+    title:
+      ko: noroshi 데모
+      en: noroshi demo
+    timezone: Asia/Seoul
+    notify:
+      - discord
+      - teams
+    groups:
+      - key: web
+        name:
+          ko: 웹
+          en: Web
+        components:
+          - key: example
+            name: example.com
+            description:
+              ko: HTTPS, TLS, 도메인 만료를 함께 본다
+              en: HTTPS, TLS, and domain expiry
+            checks:
+              - key: https
+                type: http
+                url: https://example.com/
+                keyword: Example Domain
+              - key: tls
+                type: tls
+                address: example.com:443
+              - key: domain
+                type: domain_expiry
+                domain: example.com
+                interval: 1h
+      - key: infra
+        name:
+          ko: 인프라
+          en: Infrastructure
+        components:
+          - key: postgres
+            name: Postgres
+            checks:
+              - key: port
+                type: tcp
+                address: postgres:5432
+          - key: half
+            name:
+              ko: 절반만 장애
+              en: Half broken
+            checks:
+              - key: ok
+                type: tcp
+                address: postgres:5432
+              - key: bad
+                type: tcp
+                address: postgres:9
+          - key: broken
+            name:
+              ko: 일부러 끊긴 서비스
+              en: Deliberately broken
+            checks:
+              - key: closed-port
+                type: tcp
+                address: postgres:9

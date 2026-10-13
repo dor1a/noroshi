@@ -1,0 +1,36 @@
+{{define "head" -}}
+<!doctype html>
+<html lang="{{.Locale}}"{{with .Theme}} data-theme="{{.}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.DocTitle}}</title>
+<link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{asset "style.css"}}">
+<script src="{{asset "mode.js"}}"></script>
+<script src="{{asset "htmx.min.js"}}" defer></script>
+</head>
+<body>
+{{- end}}
+
+{{define "foot" -}}
+<button type="button" id="mode-toggle" class="mode-toggle" hidden data-label-light="{{t .Locale "mode.to_light"}}" data-label-dark="{{t .Locale "mode.to_dark"}}">
+<svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.3M12 19.2v2.3M2.5 12h2.3M19.2 12h2.3M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>
+<svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.6A8.2 8.2 0 0 1 9.4 4a8.2 8.2 0 1 0 10.6 10.6z"/></svg>
+</button>
+</body>
+</html>
+{{- end}}
+
+{{define "lang" -}}
+<a href="?lang={{t .Locale "lang.switch_to"}}" hreflang="{{t .Locale "lang.switch_to"}}">{{t .Locale "lang.switch"}}</a>
+{{- end}}
+
+{{define "error" -}}
+{{template "head" .}}
+<main class="sheet error">
+  <h1>{{.Message}}</h1>
+  <p><a href="/">{{t .Locale "nav.home"}}</a></p>
+</main>
+{{template "foot" .}}
+{{- end}}

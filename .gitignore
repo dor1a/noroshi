@@ -1,0 +1,5 @@
+/bin/
+/dist/
+*.local.yaml
+.env
+/deploy/compose/secrets/

@@ -1,0 +1,135 @@
+{{define "page" -}}
+{{template "head" .}}
+<main class="sheet">
+  <header class="mast">
+    <span class="title">{{.Title}}</span>
+    <nav class="nav">
+      {{if .Multi}}<a href="/?lang={{.Locale}}">{{t .Locale "page.list"}}</a>{{end}}
+      {{template "lang" .}}
+    </nav>
+  </header>
+  {{template "live" .}}
+  <footer class="colophon"><span>{{t .Locale "page.powered"}}</span></footer>
+</main>
+{{template "foot" .}}
+{{- end}}
+
+{{define "live" -}}
+<div id="live" class="live" hx-get="{{.LivePath}}" hx-trigger="every 60s" hx-swap="outerHTML">
+  <section class="verdict-box vt-{{.Overall}}">
+    <p class="vb-head"><span class="glyph" aria-hidden="true">{{glyph .Overall}}</span>{{t .Locale (printf "banner.%s" .Overall)}}</p>
+    <div class="vb-body">
+      <p>{{t .Locale (printf "verdict.%s" .Overall)}}</p>
+      <p class="vb-time">{{t .Locale "page.updated"}} <time>{{fmtTime .UpdatedAt .Loc}}</time></p>
+    </div>
+  </section>
+  {{range .Active}}{{template "incident_card" .}}{{end}}
+  <section class="card">
+    <header class="card-head">
+      <h2>{{t .Locale "card.title"}}</h2>
+      <span class="range">{{fmtRange .Locale .From .To}}</span>
+    </header>
+    {{range .Groups}}
+    <div class="group">
+      <div class="group-head">
+        <h3>{{.Name}}</h3>
+        <span class="count">{{tf $.Locale "group.count" .OK .Total}}</span>
+      </div>
+      {{range .Components}}
+      <article class="row">
+        <div class="row-head">
+          <span class="who">
+            <span class="glyph s-{{.Status}}" aria-hidden="true">{{glyph .Status}}</span>
+            <span class="name">{{.Name}}</span>
+            {{if ne (print .Status) "operational"}}<span class="state s-{{.Status}}">{{t $.Locale (printf "status.%s" .Status)}}</span>{{end}}
+          </span>
+          <span class="pct">{{if .HasData}}{{tf $.Locale "uptime.percent" (pct .Percent)}}{{else}}{{t $.Locale "uptime.nodata"}}{{end}}</span>
+        </div>
+        {{with .Description}}<p class="desc">{{.}}</p>{{end}}
+        <div class="ticks" role="img" aria-label="{{tf $.Locale "uptime.window" $.Window}}">
+          {{- range .Days}}<i class="{{dayClass .}}" title="{{dayTitle $.Locale .}}"></i>{{end -}}
+        </div>
+      </article>
+      {{end}}
+    </div>
+    {{end}}
+  </section>
+  <section class="card past">
+    <header class="card-head">
+      <h2>{{t .Locale "incident.past"}}</h2>
+      <span class="range">{{tf .Locale "incident.past_days" .PastDays}}</span>
+    </header>
+    {{if .Past}}
+    <ul class="past-list">
+      {{range .Past}}
+      <li>
+        <a href="{{.URL}}">{{.Title}}</a>
+        <span class="when"><time>{{fmtTime .Started .Loc}}</time>{{with .Resolved}} – <time>{{fmtTime . $.Loc}}</time>{{end}}</span>
+      </li>
+      {{end}}
+    </ul>
+    {{else}}
+    <p class="empty">{{t .Locale "incident.none"}}</p>
+    {{end}}
+  </section>
+</div>
+{{- end}}
+
+{{define "incident_card" -}}
+<section class="incident it-{{.Tone}}">
+  <header class="incident-head">
+    <h2>{{if .URL}}<a href="{{.URL}}">{{.Title}}</a>{{else}}{{.Title}}{{end}}</h2>
+    <span class="stage-tag st-{{.StageKey}}">{{.StageLabel}}</span>
+  </header>
+  {{if .Affected}}
+  <p class="affected">
+    {{range .Affected}}<span class="s-{{.Status}}"><span class="glyph" aria-hidden="true">{{glyph .Status}}</span>{{.Name}}</span>{{end}}
+  </p>
+  {{end}}
+  <ol class="timeline">
+    {{range .Updates}}
+    <li class="st-{{.StageKey}}">
+      <p class="when"><span class="stage-name">{{.StageLabel}}</span> <time>{{fmtTime .At $.Loc}}</time>{{with .Author}} <span class="by">{{.}}</span>{{end}}</p>
+      <p class="body">{{.Body}}</p>
+      {{range .Notes}}<p class="note{{if not .OK}} bad{{end}}">{{.Text}}</p>{{end}}
+    </li>
+    {{end}}
+  </ol>
+</section>
+{{- end}}
+
+{{define "incident" -}}
+{{template "head" .}}
+<main class="sheet">
+  <header class="mast">
+    <a class="title" href="{{.Home}}">{{.PageTitle}}</a>
+    <nav class="nav">
+      <a href="{{.Home}}">{{t .Locale "incident.back"}}</a>
+      {{template "lang" .}}
+    </nav>
+  </header>
+  {{template "incident_card" .Inc}}
+  <footer class="colophon"><span>{{t .Locale "page.powered"}}</span></footer>
+</main>
+{{template "foot" .}}
+{{- end}}
+
+{{define "pages" -}}
+{{template "head" .}}
+<main class="sheet">
+  <header class="mast">
+    <span class="title">{{t .Locale "page.list"}}</span>
+    <nav class="nav">{{template "lang" .}}</nav>
+  </header>
+  <div class="pages">
+    {{range .Pages}}
+    <a href="/p/{{.Key}}?lang={{$.Locale}}">
+      <span class="name">{{.Title}}</span>
+      <span class="state s-{{.Status}}"><span class="glyph" aria-hidden="true">{{glyph .Status}}</span>{{t $.Locale (printf "status.%s" .Status)}}</span>
+    </a>
+    {{end}}
+  </div>
+  <footer class="colophon"><span>{{t .Locale "page.powered"}}</span></footer>
+</main>
+{{template "foot" .}}
+{{- end}}

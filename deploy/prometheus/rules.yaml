@@ -1,0 +1,47 @@
+groups:
+  - name: noroshi
+    rules:
+      - alert: NoroshiCheckDown
+        expr: noroshi_check_up == 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.page }}/{{ $labels.component }}: check {{ $labels.check }} is down"
+
+      - alert: NoroshiCheckStalled
+        expr: time() - noroshi_check_last_run_timestamp_seconds > 3 * noroshi_check_interval_seconds
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.page }}/{{ $labels.component }}: check {{ $labels.check }} has not run for 3 intervals"
+
+      - alert: NoroshiNoProberLeader
+        expr: sum(noroshi_prober_leader) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No noroshi instance is running the checks"
+
+      - alert: NoroshiMultipleProberLeaders
+        expr: sum(noroshi_prober_leader) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than one noroshi instance is running the checks"
+
+      - alert: NoroshiCertificateExpiringSoon
+        expr: noroshi_cert_expiry_timestamp_seconds - time() < 14 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.page }}/{{ $labels.component }}: certificate expires within 14 days"
+
+      - alert: NoroshiDomainExpiringSoon
+        expr: noroshi_domain_expiry_timestamp_seconds - time() < 30 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.page }}/{{ $labels.component }}: domain expires within 30 days"
