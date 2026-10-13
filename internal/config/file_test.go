@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -260,5 +261,77 @@ func TestNotifierURL(t *testing.T) {
 	t.Setenv("NOROSHI_TEST_WEBHOOK", "https://discord.com/api/webhooks/1/x")
 	if u, err := n.URL(); err != nil || u != "https://discord.com/api/webhooks/1/x" {
 		t.Fatalf("got %q %v", u, err)
+	}
+}
+
+func TestAlertInheritanceAndDocker(t *testing.T) {
+	f, err := ParseFile([]byte(`
+defaults:
+  docker_host: tcp://docker-socket-proxy:2375
+pages:
+  - key: public
+    title: Public
+    alert: false
+    groups:
+      - key: media
+        name: Media
+        components:
+          - key: plex
+            name: Plex
+            checks:
+              - key: container
+                type: docker
+                container: plex
+                docker_host: tcp://atsui:2375
+          - key: ombi
+            name: Ombi
+            alert: true
+            checks:
+              - key: container
+                type: docker
+                container: ombi
+              - key: web
+                type: http
+                url: https://ombi.example.com/
+                alert: false
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	comps := f.Pages[0].Groups[0].Components
+	if comps[0].Checks[0].AlertEnabled() || !comps[1].Checks[0].AlertEnabled() || comps[1].Checks[1].AlertEnabled() {
+		t.Fatal("alert: false must flow down from the page and be overridable at each level")
+	}
+	if comps[0].Checks[0].DockerHost != "tcp://atsui:2375" || comps[1].Checks[0].DockerHost != "tcp://docker-socket-proxy:2375" {
+		t.Fatalf("docker hosts: %q %q", comps[0].Checks[0].DockerHost, comps[1].Checks[0].DockerHost)
+	}
+	if f.Pages[0].Private() {
+		t.Fatal("pages are public by default")
+	}
+
+	for yaml, want := range map[string]string{
+		"pages:\n  - key: a\n    title: A\n    visibility: secret\n": "visibility must be public or private",
+		"pages:\n  - key: a\n    title: A\n    logo: logo.bmp\n":     "logo must be",
+		"pages:\n  - key: a\n    title: A\n    groups:\n      - key: g\n        name: G\n        components:\n          - key: c\n            name: C\n            checks:\n              - key: k\n                type: docker\n                container: x\n                docker_host: http://h:2375\n": "docker_host must start with",
+		"pages:\n  - key: a\n    title: A\n    groups:\n      - key: g\n        name: G\n        components:\n          - key: c\n            name: C\n            checks:\n              - key: k\n                type: docker\n":                                                                           "container must be",
+	} {
+		if _, err := ParseFile([]byte(yaml)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("want %q, got %v", want, err)
+		}
+	}
+}
+
+func TestLoadFileResolvesLogo(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/config.yaml"
+	if err := os.WriteFile(path, []byte("pages:\n  - key: a\n    title: A\n    visibility: private\n    logo: brand/logo.png\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Pages[0].Logo != dir+"/brand/logo.png" || !f.Pages[0].Private() {
+		t.Fatalf("got %+v", f.Pages[0])
 	}
 }

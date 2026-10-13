@@ -133,7 +133,7 @@ pages:
 | `push` | Later | A signal an outside job sends on a schedule (cron watching) |
 | `dns` | Later | |
 | ICMP | No | Needs `NET_RAW` in the container, which the Kubernetes restricted policy blocks |
-| Container state | No | Prometheus exporters already cover it |
+| `docker` | Done (phase 2) | Container running and healthy, through a read-only socket proxy. Added to take over Kuma's container monitors; reverses the earlier "no container checks" |
 
 ### Judgement rules (`pending`)
 
@@ -232,7 +232,7 @@ Example alert rules ship in the repo (`deploy/prometheus/rules.yaml`).
 ## Out of scope
 
 - An operator alerting engine (deduplication, silences, escalation). Alertmanager does that
-- ICMP checks and container state checks
+- ICMP checks
 - Entering check targets in the admin pages
 - SQLite
 - Per-page admin rights (admins are one group)

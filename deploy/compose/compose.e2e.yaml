@@ -69,6 +69,7 @@ services:
       TZ: Asia/Seoul
     volumes:
       - ../config.demo.yaml:/etc/noroshi/config.yaml:ro
+      - ../demo-logo.svg:/etc/noroshi/demo-logo.svg:ro
     healthcheck:
       test:
         - CMD

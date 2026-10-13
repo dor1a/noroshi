@@ -29,6 +29,7 @@ services:
       TZ: Asia/Seoul
     volumes:
       - ../config.demo.yaml:/etc/noroshi/config.yaml:ro
+      - ../demo-logo.svg:/etc/noroshi/demo-logo.svg:ro
     ports:
       - 127.0.0.1:18080:8080
       - 127.0.0.1:18081:8081

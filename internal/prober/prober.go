@@ -319,6 +319,7 @@ func (p *Prober) runOnce(ctx context.Context, ls *leaderState, cr *checkRun) {
 
 	p.metrics.CheckRun(metrics.CheckLabels{
 		Page: cr.row.PageKey, Component: cr.row.ComponentKey, Check: cr.row.Key, Type: cr.row.Type,
+		Alert: spec.AlertEnabled(),
 	}, next.State.State, at, out.Latency, spec.Interval.Duration, next.CertExpiry, next.DomainExpiry)
 	p.metrics.ComponentStatus(ref.PageKey, ref.Key, status)
 

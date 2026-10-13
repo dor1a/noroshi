@@ -121,6 +121,7 @@ var messages = map[string]map[string]string{
 		"uptime.window":  "최근 %d일",
 		"uptime.percent": "가용률 %s%%",
 		"uptime.nodata":  "데이터 없음",
+		"uptime.down":    "장애 %s",
 		"uptime.ago":     "%d일 전",
 		"uptime.today":   "오늘",
 
@@ -188,6 +189,9 @@ var messages = map[string]map[string]string{
 		"error.login_failed": "로그인에 실패했습니다. 다시 시도해 주세요",
 		"error.oidc_down":    "로그인 서버에 연결할 수 없습니다",
 
+		"page.private":                 "비공개",
+		"page.refresh_in":              "%s 후 새로고침",
+		"admin.nav_pages":              "상태 페이지",
 		"incident.stage.investigating": "조사 중",
 		"incident.stage.identified":    "원인 확인",
 		"incident.stage.monitoring":    "지켜보는 중",
@@ -253,6 +257,7 @@ var messages = map[string]map[string]string{
 		"uptime.window":  "Past %d days",
 		"uptime.percent": "%s%% uptime",
 		"uptime.nodata":  "No data",
+		"uptime.down":    "%s down",
 		"uptime.ago":     "%d days ago",
 		"uptime.today":   "Today",
 
@@ -320,6 +325,9 @@ var messages = map[string]map[string]string{
 		"error.login_failed": "Sign-in failed. Please try again",
 		"error.oidc_down":    "The sign-in server is unreachable",
 
+		"page.private":                 "Private",
+		"page.refresh_in":              "Refresh in %s",
+		"admin.nav_pages":              "Status pages",
 		"incident.stage.investigating": "Investigating",
 		"incident.stage.identified":    "Identified",
 		"incident.stage.monitoring":    "Monitoring",

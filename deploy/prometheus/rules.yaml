@@ -2,7 +2,7 @@ groups:
   - name: noroshi
     rules:
       - alert: NoroshiCheckDown
-        expr: noroshi_check_up == 0
+        expr: noroshi_check_up{alert!="false"} == 0
         labels:
           severity: critical
         annotations:
@@ -33,14 +33,14 @@ groups:
           summary: "More than one noroshi instance is running the checks"
 
       - alert: NoroshiCertificateExpiringSoon
-        expr: noroshi_cert_expiry_timestamp_seconds - time() < 14 * 86400
+        expr: noroshi_cert_expiry_timestamp_seconds{alert!="false"} - time() < 14 * 86400
         labels:
           severity: warning
         annotations:
           summary: "{{ $labels.page }}/{{ $labels.component }}: certificate expires within 14 days"
 
       - alert: NoroshiDomainExpiringSoon
-        expr: noroshi_domain_expiry_timestamp_seconds - time() < 30 * 86400
+        expr: noroshi_domain_expiry_timestamp_seconds{alert!="false"} - time() < 30 * 86400
         labels:
           severity: warning
         annotations:

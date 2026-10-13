@@ -70,9 +70,9 @@ func render(t *testing.T, s *Server, name string, data any) string {
 func TestPublicTemplates(t *testing.T) {
 	s := newTestServer(t)
 	for _, locale := range []string{"ko", "en"} {
-		v := s.pageView(samplePage(), locale, "tokyonight", true)
+		v := s.pageView(samplePage(), locale, "tokyonight", true, false)
 		out := render(t, s, "page", v)
-		for _, want := range []string{`data-theme="tokyonight"`, `class="verdict-box vt-major_outage"`, "×", `class="ticks"`, "/p/home/live?lang=" + locale} {
+		for _, want := range []string{`data-theme="tokyonight"`, `class="verdict-box vt-major_outage"`, `class="vb-icon"`, `<svg viewBox="0 0 20 20"`, `class="dot s-major_outage"`, `class="ticks"`, "/p/home/live?lang=" + locale} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("%s page missing %q", locale, want)
 			}
@@ -82,19 +82,22 @@ func TestPublicTemplates(t *testing.T) {
 		}
 		render(t, s, "live", v)
 	}
-	if v := s.pageView(samplePage(), "ko", "", false); v.Groups[0].OK != 1 || v.Groups[1].OK != 0 || v.Groups[1].Total != 1 {
+	if v := s.pageView(samplePage(), "ko", "", false, false); v.Groups[0].OK != 1 || v.Groups[1].OK != 0 || v.Groups[1].Total != 1 {
 		t.Fatalf("group counts wrong: %+v", v.Groups)
 	}
 	render(t, s, "pages", struct {
 		Locale, Theme, DocTitle string
+		Admin                   bool
 		Pages                   []struct {
 			Key, Title string
 			Status     judge.Status
+			Private    bool
 		}
-	}{Locale: "ko", DocTitle: "x", Pages: []struct {
+	}{Locale: "ko", DocTitle: "x", Admin: true, Pages: []struct {
 		Key, Title string
 		Status     judge.Status
-	}{{"home", "Home", judge.Operational}}})
+		Private    bool
+	}{{"home", "Home", judge.Operational, true}}})
 	render(t, s, "error", errorView{Locale: "en", DocTitle: "x", Message: "Page not found"})
 }
 
@@ -183,7 +186,7 @@ func TestIncidentTemplates(t *testing.T) {
 	s := newTestServer(t)
 	d := samplePage()
 	d.Incidents = sampleIncidents(d.UpdatedAt)
-	v := s.pageView(d, "en", "tokyonight", false)
+	v := s.pageView(d, "en", "tokyonight", false, false)
 	if len(v.Active) != 1 || len(v.Past) != 1 {
 		t.Fatalf("active %d past %d", len(v.Active), len(v.Past))
 	}
@@ -200,10 +203,7 @@ func TestIncidentTemplates(t *testing.T) {
 	}
 
 	in := d.Incidents[0]
-	render(t, s, "incident", struct {
-		Locale, Theme, DocTitle, PageTitle, Home string
-		Inc                                      incidentView
-	}{"ko", "", "x", "Status", "/", s.incidentView(in, "ko", d.Loc, false)})
+	render(t, s, "incident", incidentPage{Locale: "ko", DocTitle: "x", PageTitle: "Status", Home: "/", Inc: s.incidentView(in, "ko", d.Loc, false)})
 
 	base := adminBase{Locale: "ko", DocTitle: "admin", Section: "incidents", UserName: "dev", Dev: true}
 	render(t, s, "admin_incidents", struct {
@@ -276,5 +276,63 @@ func TestAdminRefusesCrossOriginPosts(t *testing.T) {
 	s.AdminHandler().ServeHTTP(rec, r)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cross-site post got %d", rec.Code)
+	}
+}
+
+func TestPrivatePagesAndLogo(t *testing.T) {
+	s := newTestServer(t)
+	s.SetPages(map[string]PageMeta{
+		"home":  {Logo: &Logo{Data: []byte("<svg/>"), ContentType: "image/svg+xml", Version: "abc"}},
+		"inner": {Private: true, Logo: &Logo{Data: []byte("png"), ContentType: "image/png", Version: "def"}},
+	})
+	pages := []store.PageRow{{Key: "home"}, {Key: "inner"}}
+	public := httptest.NewRequest(http.MethodGet, "/", nil)
+	if got := s.visible(public, pages); len(got) != 1 || got[0].Key != "home" {
+		t.Fatalf("public listener must hide private pages: %+v", got)
+	}
+	var admin *http.Request
+	adminView(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { admin = r })).ServeHTTP(httptest.NewRecorder(), public)
+	if got := s.visible(admin, pages); len(got) != 2 {
+		t.Fatalf("admin listener shows every page: %+v", got)
+	}
+
+	logo := func(listener http.Handler, key string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		listener.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/p/"+key+"/logo?v=x", nil))
+		return rec
+	}
+	if rec := logo(s.PublicHandler(), "home"); rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/svg+xml" ||
+		!strings.Contains(rec.Header().Get("Content-Security-Policy"), "sandbox") {
+		t.Fatalf("public logo: %d %v", rec.Code, rec.Header())
+	}
+	if rec := logo(s.PublicHandler(), "inner"); rec.Code != http.StatusNotFound {
+		t.Fatalf("private logo on the public listener: %d", rec.Code)
+	}
+	if rec := logo(s.AdminHandler(), "inner"); rec.Code != http.StatusOK {
+		t.Fatalf("private logo for a signed-in admin: %d", rec.Code)
+	}
+
+	v := s.pageView(samplePage(), "en", "", true, true)
+	if v.Logo != "/p/home/logo?v=abc" || v.Favicon != v.Logo || v.Home != "/pages" {
+		t.Fatalf("view: %+v", v)
+	}
+	if out := render(t, s, "page", v); !strings.Contains(out, `<link rel="icon" href="/p/home/logo?v=abc">`) || !strings.Contains(out, `class="logo"`) {
+		t.Fatal("page must use the logo as favicon and in the masthead")
+	}
+}
+
+func TestTickTooltip(t *testing.T) {
+	loc := time.FixedZone("KST", 9*3600)
+	d := uptime.Day{Date: time.Date(2026, 10, 13, 0, 0, 0, 0, loc), Up: 24*time.Hour - 90*time.Second, Down: 90 * time.Second}
+	if got := tipHead("en", d) + " | " + tipDate("en", d) + " | " + tipNote("en", d); got != "99.90% uptime | Tue, Oct 13 | 2m down" {
+		t.Fatalf("en: %q", got)
+	}
+	d.Down, d.Up = 83*time.Minute, 24*time.Hour-83*time.Minute
+	if got := tipHead("ko", d) + " | " + tipDate("ko", d) + " | " + tipNote("ko", d); got != "가용률 94.24% | 10월 13일 (화) | 장애 1시간 23분" {
+		t.Fatalf("ko: %q", got)
+	}
+	empty := uptime.Day{Date: d.Date, Worst: judge.NoData}
+	if tipHead("ko", empty) != "데이터 없음" || tipNote("ko", empty) != "" {
+		t.Fatalf("no data: %q %q", tipHead("ko", empty), tipNote("ko", empty))
 	}
 }

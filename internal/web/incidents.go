@@ -128,7 +128,7 @@ func (s *Server) handlePublicIncident(w http.ResponseWriter, r *http.Request) {
 		notFound()
 		return
 	}
-	p, all, err := s.findPage(r.Context(), r.PathValue("key"))
+	p, all, err := s.findPage(r, r.PathValue("key"))
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -152,13 +152,34 @@ func (s *Server) handlePublicIncident(w http.ResponseWriter, r *http.Request) {
 	}
 	iv := s.incidentView(*in, locale, loc, false)
 	home := "/"
-	if len(all) > 1 {
+	if len(all) > 1 || isAdminView(r) {
 		home = "/p/" + p.Key
 	}
-	s.render(w, http.StatusOK, "incident", struct {
-		Locale, Theme, DocTitle, PageTitle, Home string
-		Inc                                      incidentView
-	}{locale, s.theme(w, r), in.Title + " · " + p.Title.Get(locale), p.Title.Get(locale), home, iv})
+	logo := s.logoURL(p.Key)
+	s.render(w, http.StatusOK, "incident", incidentPage{
+		Locale: locale, Theme: s.theme(w, r), DocTitle: in.Title + " · " + p.Title.Get(locale),
+		PageTitle: p.Title.Get(locale), Home: home, Logo: logo, Favicon: logo, Inc: iv,
+	})
+}
+
+type incidentPage struct {
+	Locale, Theme, DocTitle, PageTitle, Home, Logo, Favicon string
+	Inc                                                     incidentView
+}
+
+// handleLogo serves a page's logo. Private pages keep theirs behind sign-in.
+func (s *Server) handleLogo(w http.ResponseWriter, r *http.Request) {
+	meta := s.pages[r.PathValue("key")]
+	if meta.Logo == nil || (meta.Private && !isAdminView(r)) {
+		http.NotFound(w, r)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", meta.Logo.ContentType)
+	h.Set("Cache-Control", "public, max-age=86400")
+	// An SVG logo is a document of its own; it gets no scripts or requests.
+	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+	w.Write(meta.Logo.Data) //nolint:errcheck
 }
 
 // ---- admin ----
@@ -467,7 +488,10 @@ func (s *Server) renderIncident(w http.ResponseWriter, status int, base adminBas
 		fv.Submit = i18n.T(base.Locale, "admin.incident_add_note")
 	}
 	public := ""
-	if s.env.BaseURL != "" {
+	switch {
+	case s.private(in.PageKey):
+		public = incidentPath(in.PageKey, in.ID) // on this listener
+	case s.env.BaseURL != "":
 		public = s.env.BaseURL + incidentPath(in.PageKey, in.ID)
 	}
 	s.render(w, status, "admin_incident", struct {
@@ -608,7 +632,10 @@ func (s *Server) announce(ctx context.Context, incidentID, updateID int64) {
 		m := notify.Message{
 			Page: in.PageTitle.Get(locale), Title: in.Title, Stage: upd.Stage, Body: upd.Body, At: upd.At,
 		}
-		if s.env.BaseURL != "" {
+		switch {
+		case s.private(in.PageKey) && s.env.AdminURL != "":
+			m.URL = s.env.AdminURL + incidentPath(in.PageKey, in.ID)
+		case !s.private(in.PageKey) && s.env.BaseURL != "":
 			m.URL = s.env.BaseURL + incidentPath(in.PageKey, in.ID)
 		}
 		for _, c := range in.Components {

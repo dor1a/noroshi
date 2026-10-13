@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,6 +60,62 @@ type Server struct {
 	pageNotify map[string][]string
 	sender     *notify.Sender
 	bg         sync.WaitGroup
+
+	pages map[string]PageMeta
+}
+
+// PageMeta is what the config file says about a page beyond its content.
+type PageMeta struct {
+	Private bool
+	Logo    *Logo
+}
+
+// Logo is a page logo loaded at startup.
+type Logo struct {
+	Data        []byte
+	ContentType string
+	Version     string
+}
+
+// SetPages records page visibility and logos from the config file.
+func (s *Server) SetPages(meta map[string]PageMeta) { s.pages = meta }
+
+func (s *Server) private(key string) bool { return s.pages[key].Private }
+
+func (s *Server) logoURL(key string) string {
+	if l := s.pages[key].Logo; l != nil {
+		return "/p/" + key + "/logo?v=" + l.Version
+	}
+	return ""
+}
+
+type viewKey struct{}
+
+// adminView marks a request as coming through the admin listener, where
+// private pages are visible.
+func adminView(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), viewKey{}, true)))
+	})
+}
+
+func isAdminView(r *http.Request) bool {
+	v, _ := r.Context().Value(viewKey{}).(bool)
+	return v
+}
+
+// visible drops private pages unless the request came through the admin listener.
+func (s *Server) visible(r *http.Request, pages []store.PageRow) []store.PageRow {
+	if isAdminView(r) {
+		return pages
+	}
+	out := pages[:0:0]
+	for _, p := range pages {
+		if !s.private(p.Key) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 type cachedPage struct {
@@ -119,13 +176,7 @@ var funcs = template.FuncMap{
 	"tf": func(locale, key string, args ...any) string {
 		return fmt.Sprintf(i18n.T(locale, key), args...)
 	},
-	"pct": func(p float64) string {
-		s := strconv.FormatFloat(p, 'f', 2, 64)
-		if p < 100 && strings.HasPrefix(s, "100") {
-			return "99.99" // do not round a real outage up to 100
-		}
-		return s
-	},
+	"pct": pct,
 	"fmtTime": func(t time.Time, loc *time.Location) string {
 		return t.In(loc).Format("2006-01-02 15:04 MST")
 	},
@@ -137,19 +188,72 @@ var funcs = template.FuncMap{
 		}{locale, rows}
 	},
 	"glyph":      glyph,
+	"statusIcon": statusIcon,
+	"favicon":    favicon,
 	"asset":      asset,
 	"fmtRange":   fmtRange,
 	"stateGlyph": stateGlyph,
-	"dayTitle": func(locale string, d uptime.Day) string {
-		date := d.Date.Format("2006-01-02")
-		if !d.HasData() {
-			if d.Worst == judge.Maintenance {
-				return date + ": " + i18n.T(locale, "status.under_maintenance")
-			}
-			return date + ": " + i18n.T(locale, "uptime.nodata")
+	"tipHead":    tipHead,
+	"tipDate":    tipDate,
+	"tipNote":    tipNote,
+}
+
+// pct prints a percentage with two decimals and never rounds a real outage
+// up to 100.
+func pct(p float64) string {
+	s := strconv.FormatFloat(p, 'f', 2, 64)
+	if p < 100 && strings.HasPrefix(s, "100") {
+		return "99.99"
+	}
+	return s
+}
+
+// tipHead, tipDate, and tipNote fill the tooltip of one uptime tick:
+// "99.95% uptime" in the tick's colour, "Mon, Oct 13", and "1m down".
+func tipHead(locale string, d uptime.Day) string {
+	switch {
+	case d.HasData():
+		return fmt.Sprintf(i18n.T(locale, "uptime.percent"), pct(d.Percent()))
+	case d.Worst == judge.Maintenance:
+		return i18n.T(locale, "status.under_maintenance")
+	}
+	return i18n.T(locale, "uptime.nodata")
+}
+
+func tipDate(locale string, d uptime.Day) string {
+	if locale == "ko" {
+		return fmt.Sprintf("%d월 %d일 (%s)", d.Date.Month(), d.Date.Day(), []string{"일", "월", "화", "수", "목", "금", "토"}[d.Date.Weekday()])
+	}
+	return d.Date.Format("Mon, Jan 2")
+}
+
+func tipNote(locale string, d uptime.Day) string {
+	if d.Down <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(i18n.T(locale, "uptime.down"), fmtDuration(locale, d.Down))
+}
+
+// fmtDuration prints a downtime rounded up to the minute: "1h 23m" or "1시간 23분".
+func fmtDuration(locale string, d time.Duration) string {
+	mins := int((d + time.Minute - 1) / time.Minute)
+	h, m := mins/60, mins%60
+	if locale == "ko" {
+		switch {
+		case h == 0:
+			return fmt.Sprintf("%d분", m)
+		case m == 0:
+			return fmt.Sprintf("%d시간", h)
 		}
-		return fmt.Sprintf("%s: %.2f%%", date, d.Percent())
-	},
+		return fmt.Sprintf("%d시간 %d분", h, m)
+	}
+	switch {
+	case h == 0:
+		return fmt.Sprintf("%dm", m)
+	case m == 0:
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh %dm", h, m)
 }
 
 // assetVersion changes whenever an embedded static file changes, so browsers
@@ -168,7 +272,41 @@ var assetVersion = func() string {
 
 func asset(name string) string { return "/static/" + name + "?v=" + assetVersion }
 
+// favicon uses the view's Favicon field when it has one, and the bundled
+// icon otherwise, so every template can share one head.
+func favicon(v any) string {
+	rv := reflect.Indirect(reflect.ValueOf(v))
+	if rv.Kind() == reflect.Struct {
+		if f := rv.FieldByName("Favicon"); f.IsValid() && f.Kind() == reflect.String && f.String() != "" {
+			return f.String()
+		}
+	}
+	return asset("favicon.svg")
+}
+
 func glyph(s judge.Status) string { return s.Glyph() }
+
+// statusIcon is the filled badge for the overall verdict: a circle in the
+// status colour with the symbol cut out in the page colour.
+func statusIcon(s judge.Status) template.HTML {
+	const open = `<svg viewBox="0 0 20 20" focusable="false">`
+	disc := `<circle cx="10" cy="10" r="10" fill="currentColor"/>`
+	mark := `stroke="var(--paper)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"`
+	var symbol string
+	switch s {
+	case judge.Operational:
+		symbol = `<path d="M5.6 10.4l3 3 5.8-6.4" ` + mark + `/>`
+	case judge.Degraded, judge.Partial:
+		symbol = `<path d="M10 5.4v5.4" ` + mark + `/><circle cx="10" cy="14.3" r="1.3" fill="var(--paper)"/>`
+	case judge.Major:
+		symbol = `<path d="M6.8 6.8l6.4 6.4M13.2 6.8l-6.4 6.4" ` + mark + `/>`
+	case judge.Maintenance:
+		symbol = `<path d="M6 10h8" ` + mark + `/>`
+	default:
+		disc = `<circle cx="10" cy="10" r="8.9" fill="none" stroke="currentColor" stroke-width="2.2"/>`
+	}
+	return template.HTML(open + disc + symbol + `</svg>`)
+}
 
 func stateGlyph(state string) string {
 	switch state {
@@ -303,6 +441,7 @@ func (s *Server) PublicHandler() http.Handler {
 	mux.HandleFunc("GET /p/{key}", s.handlePage)
 	mux.HandleFunc("GET /p/{key}/live", s.handleLive)
 	mux.HandleFunc("GET /p/{key}/incidents/{id}", s.handlePublicIncident)
+	mux.HandleFunc("GET /p/{key}/logo", s.handleLogo)
 	mux.HandleFunc("GET /api/v1/pages/{key}", s.handleAPI)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, r, http.StatusNotFound, i18n.T(s.locale(w, r), "page.notfound"))
@@ -328,6 +467,13 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.Handle("GET /admin/incidents/{id}", s.auth.Require(http.HandlerFunc(s.handleIncident)))
 	mux.Handle("POST /admin/incidents/{id}/updates", s.auth.Require(http.HandlerFunc(s.handleIncidentUpdate)))
 	mux.Handle("POST /admin/incidents/{id}/delete", s.auth.Require(http.HandlerFunc(s.handleIncidentDelete)))
+	// Every page, private ones included, for signed-in admins.
+	viewer := func(h http.HandlerFunc) http.Handler { return s.auth.Require(adminView(h)) }
+	mux.Handle("GET /pages", viewer(s.handleIndex))
+	mux.Handle("GET /p/{key}", viewer(s.handlePage))
+	mux.Handle("GET /p/{key}/live", viewer(s.handleLive))
+	mux.Handle("GET /p/{key}/incidents/{id}", viewer(s.handlePublicIncident))
+	mux.Handle("GET /p/{key}/logo", viewer(s.handleLogo))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin", http.StatusFound)
 	})
@@ -465,11 +611,12 @@ func overall(statuses []judge.Status) judge.Status {
 	return judge.Worst(statuses)
 }
 
-func (s *Server) findPage(ctx context.Context, key string) (*store.PageRow, []store.PageRow, error) {
-	pages, err := s.store.Pages(ctx)
+func (s *Server) findPage(r *http.Request, key string) (*store.PageRow, []store.PageRow, error) {
+	pages, err := s.store.Pages(r.Context())
 	if err != nil {
 		return nil, nil, err
 	}
+	pages = s.visible(r, pages)
 	for i := range pages {
 		if pages[i].Key == key {
 			return &pages[i], pages, nil
@@ -483,6 +630,10 @@ type pageView struct {
 	Theme     string
 	DocTitle  string
 	Title     string
+	Logo      string
+	Favicon   string
+	Home      string
+	Private   bool
 	Multi     bool
 	LivePath  string
 	Window    int
@@ -512,16 +663,21 @@ type componentView struct {
 	Percent     float64
 }
 
-func (s *Server) pageView(d *pageData, locale, theme string, multi bool) pageView {
+func (s *Server) pageView(d *pageData, locale, theme string, multi, admin bool) pageView {
 	title := d.Page.Title.Get(locale)
 	v := pageView{
 		Locale: locale, Theme: theme, DocTitle: title, Title: title, Multi: multi,
+		Logo: s.logoURL(d.Page.Key), Home: "/", Private: s.private(d.Page.Key),
 		LivePath: "/p/" + d.Page.Key + "/live?lang=" + locale,
 		Window:   Window, Overall: d.Overall, UpdatedAt: d.UpdatedAt, Loc: d.Loc,
 	}
 	today := d.UpdatedAt.In(d.Loc)
 	v.To = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, d.Loc)
 	v.From = v.To.AddDate(0, 0, -(Window - 1))
+	v.Favicon = v.Logo
+	if admin {
+		v.Home = "/pages"
+	}
 	v.PastDays = PastDays
 	for _, in := range d.Incidents {
 		iv := s.incidentView(in, locale, d.Loc, false)
@@ -554,37 +710,41 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if len(pages) == 1 {
+	pages = s.visible(r, pages)
+	admin := isAdminView(r)
+	if len(pages) == 1 && !admin {
 		d, err := s.loadPage(r.Context(), pages[0])
 		if err != nil {
 			s.fail(w, r, err)
 			return
 		}
-		s.render(w, http.StatusOK, "page", s.pageView(d, locale, s.theme(w, r), false))
+		s.render(w, http.StatusOK, "page", s.pageView(d, locale, s.theme(w, r), false, false))
 		return
 	}
 	type item struct {
 		Key, Title string
 		Status     judge.Status
+		Private    bool
 	}
 	view := struct {
 		Locale, Theme, DocTitle string
+		Admin                   bool
 		Pages                   []item
-	}{Locale: locale, Theme: s.theme(w, r), DocTitle: i18n.T(locale, "page.list")}
+	}{Locale: locale, Theme: s.theme(w, r), DocTitle: i18n.T(locale, "page.list"), Admin: admin}
 	for _, p := range pages {
 		d, err := s.loadPage(r.Context(), p)
 		if err != nil {
 			s.fail(w, r, err)
 			return
 		}
-		view.Pages = append(view.Pages, item{Key: p.Key, Title: p.Title.Get(locale), Status: d.Overall})
+		view.Pages = append(view.Pages, item{Key: p.Key, Title: p.Title.Get(locale), Status: d.Overall, Private: s.private(p.Key)})
 	}
 	s.render(w, http.StatusOK, "pages", view)
 }
 
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	locale := s.locale(w, r)
-	p, all, err := s.findPage(r.Context(), r.PathValue("key"))
+	p, all, err := s.findPage(r, r.PathValue("key"))
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -598,12 +758,12 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, http.StatusOK, "page", s.pageView(d, locale, s.theme(w, r), len(all) > 1))
+	s.render(w, http.StatusOK, "page", s.pageView(d, locale, s.theme(w, r), len(all) > 1 || isAdminView(r), isAdminView(r)))
 }
 
 func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	locale := s.locale(w, r)
-	p, all, err := s.findPage(r.Context(), r.PathValue("key"))
+	p, all, err := s.findPage(r, r.PathValue("key"))
 	if err != nil || p == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -613,7 +773,7 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, http.StatusOK, "live", s.pageView(d, locale, s.theme(w, r), len(all) > 1))
+	s.render(w, http.StatusOK, "live", s.pageView(d, locale, s.theme(w, r), len(all) > 1 || isAdminView(r), isAdminView(r)))
 }
 
 type apiIncident struct {
@@ -634,7 +794,7 @@ type apiComponent struct {
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	locale := s.locale(w, r)
-	p, _, err := s.findPage(r.Context(), r.PathValue("key"))
+	p, _, err := s.findPage(r, r.PathValue("key"))
 	if err != nil || p == nil {
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 		return
@@ -678,6 +838,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 type adminRow struct {
 	ID          int64
 	Page        string
+	PageKey     string
 	Component   string
 	Key         string
 	Type        string
@@ -737,7 +898,7 @@ func (s *Server) adminBase(w http.ResponseWriter, r *http.Request, section strin
 
 func (s *Server) adminRow(locale string, c store.AdminCheck) adminRow {
 	row := adminRow{
-		ID: c.ID, Page: c.PageTitle.Get(locale), Component: c.ComponentName.Get(locale),
+		ID: c.ID, Page: c.PageTitle.Get(locale), PageKey: c.PageKey, Component: c.ComponentName.Get(locale),
 		Key: c.Key, Type: c.Type, Target: c.Spec.Target(), StateKey: string(judge.Unknown),
 		Since: "-", LastRun: "-", Latency: "-", Result: "-", Expiry: "-",
 		StateLabel: i18n.T(locale, "state.unknown"), SlowLabel: i18n.T(locale, "state.slow"),

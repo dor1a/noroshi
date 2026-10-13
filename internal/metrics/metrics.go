@@ -4,6 +4,7 @@ package metrics
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -30,6 +31,7 @@ type Metrics struct {
 // CheckLabels identifies a check in metrics.
 type CheckLabels struct {
 	Page, Component, Check, Type string
+	Alert                        bool
 }
 
 // New registers all collectors.
@@ -39,8 +41,8 @@ func New(version string) *Metrics {
 		reg: reg,
 		checkUp: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "noroshi_check_up",
-			Help: "Debounced check state: 1 up, 0 down. Absent while unknown.",
-		}, []string{"page", "component", "check", "type"}),
+			Help: "Debounced check state: 1 up, 0 down. Absent while unknown. alert=\"false\" marks checks that should not page.",
+		}, []string{"page", "component", "check", "type", "alert"}),
 		checkDuration: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "noroshi_check_duration_seconds",
 			Help: "Duration of the last probe run.",
@@ -56,11 +58,11 @@ func New(version string) *Metrics {
 		certExpiry: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "noroshi_cert_expiry_timestamp_seconds",
 			Help: "Unix time when the presented certificate expires.",
-		}, []string{"page", "component", "check"}),
+		}, []string{"page", "component", "check", "alert"}),
 		domainExpiry: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "noroshi_domain_expiry_timestamp_seconds",
 			Help: "Unix time when the domain registration expires.",
-		}, []string{"page", "component", "check"}),
+		}, []string{"page", "component", "check", "alert"}),
 		component: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "noroshi_component_status",
 			Help: "1 for the component's current status, 0 for the others.",
@@ -109,22 +111,23 @@ func (m *Metrics) SetLeader(on bool) {
 // CheckRun records one probe run and the resulting state.
 func (m *Metrics) CheckRun(l CheckLabels, state judge.CheckState, at time.Time, dur, interval time.Duration, cert, domain *time.Time) {
 	short := []string{l.Page, l.Component, l.Check}
+	alert := strconv.FormatBool(l.Alert)
 	switch state {
 	case judge.Up:
-		m.checkUp.WithLabelValues(l.Page, l.Component, l.Check, l.Type).Set(1)
+		m.checkUp.WithLabelValues(l.Page, l.Component, l.Check, l.Type, alert).Set(1)
 	case judge.Down:
-		m.checkUp.WithLabelValues(l.Page, l.Component, l.Check, l.Type).Set(0)
+		m.checkUp.WithLabelValues(l.Page, l.Component, l.Check, l.Type, alert).Set(0)
 	default:
-		m.checkUp.DeleteLabelValues(l.Page, l.Component, l.Check, l.Type)
+		m.checkUp.DeleteLabelValues(l.Page, l.Component, l.Check, l.Type, alert)
 	}
 	m.checkDuration.WithLabelValues(short...).Set(dur.Seconds())
 	m.checkLastRun.WithLabelValues(short...).Set(float64(at.Unix()))
 	m.checkInterval.WithLabelValues(short...).Set(interval.Seconds())
 	if cert != nil {
-		m.certExpiry.WithLabelValues(short...).Set(float64(cert.Unix()))
+		m.certExpiry.WithLabelValues(l.Page, l.Component, l.Check, alert).Set(float64(cert.Unix()))
 	}
 	if domain != nil {
-		m.domainExpiry.WithLabelValues(short...).Set(float64(domain.Unix()))
+		m.domainExpiry.WithLabelValues(l.Page, l.Component, l.Check, alert).Set(float64(domain.Unix()))
 	}
 }
 

@@ -2,9 +2,13 @@
 {{template "head" .}}
 <main class="sheet">
   <header class="mast">
-    <span class="title">{{.Title}}</span>
+    <span class="brand{{if .Logo}} with-logo{{end}}">
+      {{with .Logo}}<img class="logo" src="{{.}}" alt="">{{end}}
+      <span class="title">{{.Title}}</span>
+      {{if .Private}}<span class="tag">{{t .Locale "page.private"}}</span>{{end}}
+    </span>
     <nav class="nav">
-      {{if .Multi}}<a href="/?lang={{.Locale}}">{{t .Locale "page.list"}}</a>{{end}}
+      {{if .Multi}}<a href="{{.Home}}?lang={{.Locale}}">{{t .Locale "page.list"}}</a>{{end}}
       {{template "lang" .}}
     </nav>
   </header>
@@ -17,10 +21,9 @@
 {{define "live" -}}
 <div id="live" class="live" hx-get="{{.LivePath}}" hx-trigger="every 60s" hx-swap="outerHTML">
   <section class="verdict-box vt-{{.Overall}}">
-    <p class="vb-head"><span class="glyph" aria-hidden="true">{{glyph .Overall}}</span>{{t .Locale (printf "banner.%s" .Overall)}}</p>
+    <p class="vb-head"><span class="vb-icon" aria-hidden="true">{{statusIcon .Overall}}</span>{{t .Locale (printf "banner.%s" .Overall)}}</p>
     <div class="vb-body">
       <p>{{t .Locale (printf "verdict.%s" .Overall)}}</p>
-      <p class="vb-time">{{t .Locale "page.updated"}} <time>{{fmtTime .UpdatedAt .Loc}}</time></p>
     </div>
   </section>
   {{range .Active}}{{template "incident_card" .}}{{end}}
@@ -39,7 +42,7 @@
       <article class="row">
         <div class="row-head">
           <span class="who">
-            <span class="glyph s-{{.Status}}" aria-hidden="true">{{glyph .Status}}</span>
+            <span class="dot s-{{.Status}}" aria-hidden="true">{{statusIcon .Status}}</span>
             <span class="name">{{.Name}}</span>
             {{if ne (print .Status) "operational"}}<span class="state s-{{.Status}}">{{t $.Locale (printf "status.%s" .Status)}}</span>{{end}}
           </span>
@@ -47,7 +50,7 @@
         </div>
         {{with .Description}}<p class="desc">{{.}}</p>{{end}}
         <div class="ticks" role="img" aria-label="{{tf $.Locale "uptime.window" $.Window}}">
-          {{- range .Days}}<i class="{{dayClass .}}" title="{{dayTitle $.Locale .}}"></i>{{end -}}
+          {{- range .Days}}<i class="{{dayClass .}}" data-tip-head="{{tipHead $.Locale .}}" data-tip-date="{{tipDate $.Locale .}}" data-tip-note="{{tipNote $.Locale .}}"></i>{{end -}}
         </div>
       </article>
       {{end}}
@@ -72,6 +75,10 @@
     <p class="empty">{{t .Locale "incident.none"}}</p>
     {{end}}
   </section>
+  <p class="refresh">
+    <span>{{t .Locale "page.updated"}} <time>{{fmtTime .UpdatedAt .Loc}}</time></span>
+    <span data-refresh-in="60" data-label="{{t .Locale "page.refresh_in"}}">{{tf .Locale "page.refresh_in" "1:00"}}</span>
+  </p>
 </div>
 {{- end}}
 
@@ -83,7 +90,7 @@
   </header>
   {{if .Affected}}
   <p class="affected">
-    {{range .Affected}}<span class="s-{{.Status}}"><span class="glyph" aria-hidden="true">{{glyph .Status}}</span>{{.Name}}</span>{{end}}
+    {{range .Affected}}<span class="s-{{.Status}}"><span class="dot" aria-hidden="true">{{statusIcon .Status}}</span>{{.Name}}</span>{{end}}
   </p>
   {{end}}
   <ol class="timeline">
@@ -102,7 +109,10 @@
 {{template "head" .}}
 <main class="sheet">
   <header class="mast">
-    <a class="title" href="{{.Home}}">{{.PageTitle}}</a>
+    <a class="brand{{if .Logo}} with-logo{{end}}" href="{{.Home}}">
+      {{with .Logo}}<img class="logo" src="{{.}}" alt="">{{end}}
+      <span class="title">{{.PageTitle}}</span>
+    </a>
     <nav class="nav">
       <a href="{{.Home}}">{{t .Locale "incident.back"}}</a>
       {{template "lang" .}}
@@ -124,8 +134,8 @@
   <div class="pages">
     {{range .Pages}}
     <a href="/p/{{.Key}}?lang={{$.Locale}}">
-      <span class="name">{{.Title}}</span>
-      <span class="state s-{{.Status}}"><span class="glyph" aria-hidden="true">{{glyph .Status}}</span>{{t $.Locale (printf "status.%s" .Status)}}</span>
+      <span class="name">{{.Title}}{{if .Private}} <span class="tag">{{t $.Locale "page.private"}}</span>{{end}}</span>
+      <span class="state s-{{.Status}}"><span class="dot" aria-hidden="true">{{statusIcon .Status}}</span>{{t $.Locale (printf "status.%s" .Status)}}</span>
     </a>
     {{end}}
   </div>

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dor1a/noroshi/internal/config"
@@ -36,6 +37,9 @@ type Outcome struct {
 type Runner struct {
 	RDAP *RDAP
 	Now  func() time.Time
+
+	mu      sync.Mutex
+	dockers map[string]*http.Client
 }
 
 // NewRunner returns a runner with a default RDAP client.
@@ -56,6 +60,8 @@ func (r *Runner) Run(ctx context.Context, c config.Check) Outcome {
 		return r.tls(ctx, c)
 	case config.TypeDomainExpiry:
 		return r.domain(ctx, c)
+	case config.TypeDocker:
+		return r.docker(ctx, c)
 	}
 	return Outcome{Detail: "unknown check type " + c.Type}
 }

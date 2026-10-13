@@ -17,6 +17,7 @@ pages:
       ko: noroshi 데모
       en: noroshi demo
     timezone: Asia/Seoul
+    logo: demo-logo.svg
     notify:
       - discord
       - teams
@@ -69,7 +70,30 @@ pages:
             name:
               ko: 일부러 끊긴 서비스
               en: Deliberately broken
+            description:
+              ko: alert false라서 장애여도 Alertmanager로 알리지 않는다
+              en: alert is false, so this outage pages no one
+            alert: false
             checks:
               - key: closed-port
                 type: tcp
                 address: postgres:9
+  - key: internal
+    title:
+      ko: 내부 페이지
+      en: Internal page
+    timezone: Asia/Seoul
+    visibility: private
+    logo: demo-logo.svg
+    groups:
+      - key: infra
+        name:
+          ko: 인프라
+          en: Infrastructure
+        components:
+          - key: db
+            name: Postgres
+            checks:
+              - key: port
+                type: tcp
+                address: postgres:5432

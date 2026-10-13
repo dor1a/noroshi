@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,7 +24,17 @@ const (
 	TypeTCP          = "tcp"
 	TypeTLS          = "tls"
 	TypeDomainExpiry = "domain_expiry"
+	TypeDocker       = "docker"
 )
+
+// Page visibility.
+const (
+	VisibilityPublic  = "public"
+	VisibilityPrivate = "private"
+)
+
+// DefaultDockerHost is where docker checks look when nothing else is set.
+const DefaultDockerHost = "unix:///var/run/docker.sock"
 
 // Notifier types.
 const (
@@ -72,21 +83,30 @@ type Defaults struct {
 	FailThreshold    int      `yaml:"fail_threshold"`
 	RecoverThreshold int      `yaml:"recover_threshold"`
 	WarnBefore       Duration `yaml:"warn_before"`
+	DockerHost       string   `yaml:"docker_host"`
 }
 
-// Page is one public status page.
+// Page is one status page. A private page is served only on the admin
+// listener, to signed-in admins.
 type Page struct {
-	Key      string    `yaml:"key" json:"key"`
-	Title    i18n.Text `yaml:"title" json:"title"`
-	Timezone string    `yaml:"timezone" json:"timezone"`
-	Notify   []string  `yaml:"notify" json:"-"`
-	Groups   []Group   `yaml:"groups" json:"groups"`
+	Key        string    `yaml:"key" json:"key"`
+	Title      i18n.Text `yaml:"title" json:"title"`
+	Timezone   string    `yaml:"timezone" json:"timezone"`
+	Visibility string    `yaml:"visibility" json:"-"`
+	Logo       string    `yaml:"logo" json:"-"`
+	Alert      *bool     `yaml:"alert" json:"-"`
+	Notify     []string  `yaml:"notify" json:"-"`
+	Groups     []Group   `yaml:"groups" json:"groups"`
 }
+
+// Private reports whether the page is hidden from the public listener.
+func (p Page) Private() bool { return p.Visibility == VisibilityPrivate }
 
 // Group is a heading on a page.
 type Group struct {
 	Key        string      `yaml:"key" json:"key"`
 	Name       i18n.Text   `yaml:"name" json:"name"`
+	Alert      *bool       `yaml:"alert" json:"-"`
 	Components []Component `yaml:"components" json:"components"`
 }
 
@@ -95,6 +115,7 @@ type Component struct {
 	Key         string    `yaml:"key" json:"key"`
 	Name        i18n.Text `yaml:"name" json:"name"`
 	Description i18n.Text `yaml:"description" json:"description,omitempty"`
+	Alert       *bool     `yaml:"alert" json:"-"`
 	Checks      []Check   `yaml:"checks" json:"checks"`
 }
 
@@ -107,6 +128,11 @@ type Check struct {
 	FailThreshold    int      `yaml:"fail_threshold" json:"fail_threshold"`
 	RecoverThreshold int      `yaml:"recover_threshold" json:"recover_threshold"`
 	WarnBefore       Duration `yaml:"warn_before" json:"warn_before"`
+
+	// Alert is false when an outage of this check should not page anyone,
+	// for example because another alert already covers the service. It is
+	// inherited from the page, group, and component.
+	Alert *bool `yaml:"alert" json:"alert,omitempty"`
 
 	// http
 	URL                string            `yaml:"url" json:"url,omitempty"`
@@ -124,6 +150,10 @@ type Check struct {
 
 	// domain_expiry
 	Domain string `yaml:"domain" json:"domain,omitempty"`
+
+	// docker
+	Container  string `yaml:"container" json:"container,omitempty"`
+	DockerHost string `yaml:"docker_host" json:"docker_host,omitempty"`
 
 	expect [][2]int
 }
@@ -150,9 +180,14 @@ func (c Check) Target() string {
 		return c.Address
 	case TypeDomainExpiry:
 		return c.Domain
+	case TypeDocker:
+		return c.Container + " @ " + c.DockerHost
 	}
 	return ""
 }
+
+// AlertEnabled reports whether an outage of this check should alert.
+func (c Check) AlertEnabled() bool { return c.Alert == nil || *c.Alert }
 
 // StatusList holds expected HTTP status codes or ranges. YAML may write each
 // entry as a number (200) or a string ("200-299").
@@ -222,13 +257,23 @@ func ParseDuration(s string) (time.Duration, error) {
 	return v, nil
 }
 
-// LoadFile reads, defaults, and validates a config file.
+// LoadFile reads, defaults, and validates a config file. Relative logo
+// paths are resolved against the file's directory.
 func LoadFile(path string) (*File, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return ParseFile(b)
+	f, err := ParseFile(b)
+	if err != nil {
+		return nil, err
+	}
+	for i := range f.Pages {
+		if l := f.Pages[i].Logo; l != "" && !filepath.IsAbs(l) {
+			f.Pages[i].Logo = filepath.Join(filepath.Dir(path), l)
+		}
+	}
+	return f, nil
 }
 
 // ParseFile parses YAML bytes, applies defaults, and validates the result.
@@ -247,9 +292,18 @@ func ParseFile(b []byte) (*File, error) {
 }
 
 var (
-	keyRe     = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
-	envNameRe = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	keyRe       = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+	envNameRe   = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	containerRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+	logoExts    = map[string]bool{".svg": true, ".png": true, ".jpg": true, ".jpeg": true, ".webp": true, ".gif": true, ".ico": true}
 )
+
+func inherit(parent bool, v *bool) bool {
+	if v != nil {
+		return *v
+	}
+	return parent
+}
 
 func (f *File) applyDefaults() {
 	d := &f.Defaults
@@ -268,15 +322,31 @@ func (f *File) applyDefaults() {
 	if d.WarnBefore.Duration == 0 {
 		d.WarnBefore.Duration = 30 * 24 * time.Hour
 	}
+	if d.DockerHost == "" {
+		d.DockerHost = DefaultDockerHost
+	}
 	for pi := range f.Pages {
 		p := &f.Pages[pi]
 		if p.Timezone == "" {
 			p.Timezone = "UTC"
 		}
+		if p.Visibility == "" {
+			p.Visibility = VisibilityPublic
+		}
+		pageAlert := inherit(true, p.Alert)
 		for gi := range p.Groups {
-			for ci := range p.Groups[gi].Components {
-				for ki := range p.Groups[gi].Components[ci].Checks {
-					c := &p.Groups[gi].Components[ci].Checks[ki]
+			g := &p.Groups[gi]
+			groupAlert := inherit(pageAlert, g.Alert)
+			for ci := range g.Components {
+				comp := &g.Components[ci]
+				compAlert := inherit(groupAlert, comp.Alert)
+				for ki := range comp.Checks {
+					c := &comp.Checks[ki]
+					alert := inherit(compAlert, c.Alert)
+					c.Alert = &alert
+					if c.Type == TypeDocker && c.DockerHost == "" {
+						c.DockerHost = d.DockerHost
+					}
 					if c.Interval.Duration == 0 {
 						c.Interval = d.Interval
 						if c.Type == TypeDomainExpiry {
@@ -354,6 +424,12 @@ func (f *File) validate() error {
 		}
 		if _, err := time.LoadLocation(p.Timezone); err != nil {
 			bad(pw, "unknown timezone %q", p.Timezone)
+		}
+		if p.Visibility != VisibilityPublic && p.Visibility != VisibilityPrivate {
+			bad(pw, "visibility must be public or private")
+		}
+		if p.Logo != "" && !logoExts[strings.ToLower(filepath.Ext(p.Logo))] {
+			bad(pw, "logo must be an svg, png, jpg, webp, gif, or ico file")
 		}
 		for _, k := range p.Notify {
 			if !notifierKeys[k] {
@@ -445,8 +521,15 @@ func (c *Check) validate() []string {
 		if c.Domain == "" || !strings.Contains(c.Domain, ".") || strings.ContainsAny(c.Domain, "/: ") {
 			out = append(out, "domain must be a registered domain name such as example.com")
 		}
+	case TypeDocker:
+		if !containerRe.MatchString(c.Container) {
+			out = append(out, "container must be a container name or ID")
+		}
+		if err := checkDockerHost(c.DockerHost); err != nil {
+			out = append(out, err.Error())
+		}
 	default:
-		out = append(out, fmt.Sprintf("unknown type %q (use http, tcp, tls, or domain_expiry)", c.Type))
+		out = append(out, fmt.Sprintf("unknown type %q (use http, tcp, tls, domain_expiry, or docker)", c.Type))
 	}
 	return out
 }
@@ -477,4 +560,21 @@ func (c *Check) Restore() error {
 		return errors.New(strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// checkDockerHost accepts unix:///path and tcp://host:port, as DOCKER_HOST does.
+func checkDockerHost(h string) error {
+	switch {
+	case strings.HasPrefix(h, "unix://"):
+		if !strings.HasPrefix(strings.TrimPrefix(h, "unix://"), "/") {
+			return errors.New("docker_host unix socket path must be absolute, e.g. unix:///var/run/docker.sock")
+		}
+		return nil
+	case strings.HasPrefix(h, "tcp://"):
+		if _, _, err := net.SplitHostPort(strings.TrimPrefix(h, "tcp://")); err != nil {
+			return errors.New("docker_host must be tcp://host:port")
+		}
+		return nil
+	}
+	return errors.New("docker_host must start with unix:// or tcp://")
 }

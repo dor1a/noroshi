@@ -4,6 +4,7 @@
   <nav class="nav">
     <a href="/admin"{{if eq .Section "checks"}} aria-current="page"{{end}}>{{t .Locale "admin.nav_checks"}}</a>
     <a href="/admin/incidents"{{if eq .Section "incidents"}} aria-current="page"{{end}}>{{t .Locale "admin.nav_incidents"}}</a>
+    <a href="/pages">{{t .Locale "admin.nav_pages"}}</a>
     <span>{{t .Locale "admin.signed_in"}} {{.UserName}}</span>
     {{if not .Dev}}<a href="/logout">{{t .Locale "admin.logout"}}</a>{{end}}
     {{template "lang" .}}
@@ -40,7 +41,7 @@
       <tbody>
         {{range .Rows}}
         <tr>
-          <td{{if eq .StateKey "down"}} class="cell-down"{{end}}>{{.Component}}<span class="sub">{{.Page}}</span></td>
+          <td{{if eq .StateKey "down"}} class="cell-down"{{end}}>{{.Component}}<span class="sub">{{.Page}} · {{.PageKey}}</span></td>
           <td><a href="/admin/checks/{{.ID}}">{{.Key}}</a><span class="sub mono">{{.Type}}</span></td>
           <td class="target">{{.Target}}</td>
           <td>{{template "admin_state" .}}<span class="sub">{{.Streak}}</span></td>

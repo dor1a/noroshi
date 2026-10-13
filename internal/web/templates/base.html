@@ -5,10 +5,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.DocTitle}}</title>
-<link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+<link rel="icon" href="{{favicon .}}">
 <link rel="stylesheet" href="{{asset "style.css"}}">
 <script src="{{asset "mode.js"}}"></script>
 <script src="{{asset "htmx.min.js"}}" defer></script>
+<script src="{{asset "refresh.js"}}" defer></script>
+<script src="{{asset "tips.js"}}" defer></script>
 </head>
 <body>
 {{- end}}

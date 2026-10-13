@@ -77,10 +77,45 @@ See [deploy/config.example.yaml](deploy/config.example.yaml). Every `key` is a s
 | `tcp` | `address` (`host:port`) |
 | `tls` | `address`, `server_name`, `insecure_skip_verify` |
 | `domain_expiry` | `domain` |
+| `docker` | `container` (name or ID), `docker_host` (`unix:///path` or `tcp://host:port`, default from `defaults.docker_host`, then `unix:///var/run/docker.sock`) |
 
 All types accept `interval`, `timeout`, `fail_threshold`, `recover_threshold`, and `warn_before`. Durations take Go syntax plus days, for example `90s`, `12h`, or `30d`. `domain_expiry` checks default to a 12 hour interval.
 
 An expiring certificate or domain only shows up in metrics until it actually expires. A failed RDAP lookup leaves the check's state unchanged.
+
+A `docker` check asks the Docker Engine API about one container: running is up, and when the container has a health check it must also be healthy (`starting` decides nothing). Point it at a read-only socket proxy that allows only `CONTAINERS`, not at the raw socket.
+
+### Pages, logos, and alerts
+
+Everything that shapes a page lives in the config file:
+
+```yaml
+pages:
+  - key: default
+    title: Phomelo
+    logo: logo.png          # relative to the config file; also the favicon
+    visibility: private     # only on the admin listener, after sign-in
+  - key: public
+    title: Phomelo
+    logo: logo.png
+    alert: false            # already covered by container alerts elsewhere
+    groups:
+      - key: game
+        name: Game
+        components:
+          - key: palworld
+            name: Palworld
+            checks:
+              - key: container
+                type: docker
+                container: 90-game-palworld-1
+```
+
+| Field | Where | Effect |
+| -- | -- | -- |
+| `logo` | page | svg, png, jpg, webp, gif, or ico, up to 1 MiB. Shown next to the title and used as the favicon |
+| `visibility` | page | `public` (default) or `private`. A private page returns 404 on the public listener and is listed at `/pages` on the admin listener |
+| `alert` | page, group, component, check | `false` keeps the check on the page but sets `alert="false"` on its metrics, so the example rules do not page for it. Inner levels override outer ones |
 
 ### Incident announcements
 
@@ -115,6 +150,7 @@ Delivery is retried on network errors, 429, and 5xx, three tries in all, and eac
 | public | `/api/v1/pages/{key}` | JSON summary with open incidents |
 | admin | `/admin` | Check states and recent results |
 | admin | `/admin/incidents` | Write and update incidents |
+| admin | `/pages`, `/p/{key}` | Every page, private ones included |
 | ops | `/healthz` | Process is up (also on public and admin) |
 | ops | `/readyz` | Database is reachable |
 | ops | `/metrics` | Prometheus metrics |
@@ -123,12 +159,12 @@ Delivery is retried on network errors, 429, and 5xx, three tries in all, and eac
 
 | Name | Labels |
 | -- | -- |
-| `noroshi_check_up` | page, component, check, type |
+| `noroshi_check_up` | page, component, check, type, alert |
 | `noroshi_check_duration_seconds` | page, component, check |
 | `noroshi_check_last_run_timestamp_seconds` | page, component, check |
 | `noroshi_check_interval_seconds` | page, component, check |
-| `noroshi_cert_expiry_timestamp_seconds` | page, component, check |
-| `noroshi_domain_expiry_timestamp_seconds` | page, component, check |
+| `noroshi_cert_expiry_timestamp_seconds` | page, component, check, alert |
+| `noroshi_domain_expiry_timestamp_seconds` | page, component, check, alert |
 | `noroshi_component_status` | page, component, status |
 | `noroshi_prober_leader` | |
 

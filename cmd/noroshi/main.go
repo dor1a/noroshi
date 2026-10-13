@@ -8,6 +8,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,6 +17,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -128,8 +132,16 @@ func serve() error {
 		targets = append(targets, notify.Target{Key: n.Key, Type: n.Type, URL: u, Locale: n.Locale})
 	}
 	pageNotify := map[string][]string{}
+	pageMeta := map[string]web.PageMeta{}
 	for _, p := range file.Pages {
 		pageNotify[p.Key] = p.Notify
+		meta := web.PageMeta{Private: p.Private()}
+		if p.Logo != "" {
+			if meta.Logo, err = loadLogo(p.Logo); err != nil {
+				return fmt.Errorf("page %s: %w", p.Key, err)
+			}
+		}
+		pageMeta[p.Key] = meta
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -155,6 +167,7 @@ func serve() error {
 		return err
 	}
 	srv.SetNotifiers(targets, pageNotify)
+	srv.SetPages(pageMeta)
 	if env.DevNoAuth {
 		log.Warn("NOROSHI_DEV_NO_AUTH is set: the admin pages require no sign-in")
 	}
@@ -207,4 +220,30 @@ func newLogger(level string) *slog.Logger {
 		lv = slog.LevelInfo
 	}
 	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lv}))
+}
+
+var logoTypes = map[string]string{
+	".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+	".webp": "image/webp", ".gif": "image/gif", ".ico": "image/x-icon",
+}
+
+// loadLogo reads a page logo once at startup.
+func loadLogo(path string) (*web.Logo, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("logo: %w", err)
+	}
+	if info.Size() > 1<<20 {
+		return nil, fmt.Errorf("logo %s is larger than 1 MiB", path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("logo: %w", err)
+	}
+	sum := sha256.Sum256(b)
+	return &web.Logo{
+		Data:        b,
+		ContentType: logoTypes[strings.ToLower(filepath.Ext(path))],
+		Version:     hex.EncodeToString(sum[:])[:10],
+	}, nil
 }
