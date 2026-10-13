@@ -13,7 +13,7 @@
     </nav>
   </header>
   {{template "live" .}}
-  <footer class="colophon"><span>{{t .Locale "page.powered"}}</span></footer>
+  {{template "colophon" .}}
 </main>
 {{template "foot" .}}
 {{- end}}
@@ -119,7 +119,7 @@
     </nav>
   </header>
   {{template "incident_card" .Inc}}
-  <footer class="colophon"><span>{{t .Locale "page.powered"}}</span></footer>
+  {{template "colophon" .}}
 </main>
 {{template "foot" .}}
 {{- end}}
@@ -139,7 +139,7 @@
     </a>
     {{end}}
   </div>
-  <footer class="colophon"><span>{{t .Locale "page.powered"}}</span></footer>
+  {{template "colophon" .}}
 </main>
 {{template "foot" .}}
 {{- end}}
