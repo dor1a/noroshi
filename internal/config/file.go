@@ -47,7 +47,16 @@ const (
 type File struct {
 	Defaults  Defaults   `yaml:"defaults" json:"-"`
 	Notifiers []Notifier `yaml:"notifiers" json:"-"`
+	Admin     Admin      `yaml:"admin" json:"-"`
 	Pages     []Page     `yaml:"pages" json:"pages"`
+}
+
+// Admin is how the admin pages present themselves. Every field is
+// optional; without them the admin pages carry the noroshi name and mark.
+type Admin struct {
+	Title    i18n.Text `yaml:"title"`
+	Logo     string    `yaml:"logo"`
+	Gravatar bool      `yaml:"gravatar"`
 }
 
 // Notifier is a chat channel that receives incident announcements. The
@@ -257,6 +266,37 @@ func ParseDuration(s string) (time.Duration, error) {
 	return v, nil
 }
 
+// IsURL reports whether a logo is fetched over http(s) rather than read
+// from a file.
+func IsURL(s string) bool {
+	return strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://")
+}
+
+// LogoExt is the lower-case extension of a logo file or URL path.
+func LogoExt(s string) string {
+	if IsURL(s) {
+		if u, err := url.Parse(s); err == nil {
+			s = u.Path
+		}
+	}
+	return strings.ToLower(filepath.Ext(s))
+}
+
+func checkLogo(l string) string {
+	if l == "" {
+		return ""
+	}
+	if IsURL(l) {
+		if u, err := url.Parse(l); err != nil || u.Host == "" {
+			return "logo is not a valid URL"
+		}
+	}
+	if !logoExts[LogoExt(l)] {
+		return "logo must be an svg, png, jpg, webp, gif, or ico file"
+	}
+	return ""
+}
+
 // LoadFile reads, defaults, and validates a config file. Relative logo
 // paths are resolved against the file's directory.
 func LoadFile(path string) (*File, error) {
@@ -268,10 +308,14 @@ func LoadFile(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i := range f.Pages {
-		if l := f.Pages[i].Logo; l != "" && !filepath.IsAbs(l) {
-			f.Pages[i].Logo = filepath.Join(filepath.Dir(path), l)
+	resolve := func(l *string) {
+		if *l != "" && !IsURL(*l) && !filepath.IsAbs(*l) {
+			*l = filepath.Join(filepath.Dir(path), *l)
 		}
+	}
+	resolve(&f.Admin.Logo)
+	for i := range f.Pages {
+		resolve(&f.Pages[i].Logo)
 	}
 	return f, nil
 }
@@ -408,6 +452,9 @@ func (f *File) validate() error {
 			bad(nw, "locale must be one of %s", strings.Join(i18n.Supported, ", "))
 		}
 	}
+	if err := checkLogo(f.Admin.Logo); err != "" {
+		bad("admin", "%s", err)
+	}
 	pageKeys := map[string]bool{}
 	for pi := range f.Pages {
 		p := &f.Pages[pi]
@@ -428,8 +475,8 @@ func (f *File) validate() error {
 		if p.Visibility != VisibilityPublic && p.Visibility != VisibilityPrivate {
 			bad(pw, "visibility must be public or private")
 		}
-		if p.Logo != "" && !logoExts[strings.ToLower(filepath.Ext(p.Logo))] {
-			bad(pw, "logo must be an svg, png, jpg, webp, gif, or ico file")
+		if err := checkLogo(p.Logo); err != "" {
+			bad(pw, "%s", err)
 		}
 		for _, k := range p.Notify {
 			if !notifierKeys[k] {

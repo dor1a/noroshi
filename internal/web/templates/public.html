@@ -131,15 +131,19 @@
     <span class="title">{{t .Locale "page.list"}}</span>
     <nav class="nav">{{template "lang" .}}</nav>
   </header>
-  <div class="pages">
-    {{range .Pages}}
-    <a href="/p/{{.Key}}?lang={{$.Locale}}">
-      <span class="name">{{.Title}}{{if .Private}} <span class="tag">{{t $.Locale "page.private"}}</span>{{end}}</span>
-      <span class="state s-{{.Status}}"><span class="dot" aria-hidden="true">{{statusIcon .Status}}</span>{{t $.Locale (printf "status.%s" .Status)}}</span>
-    </a>
-    {{end}}
-  </div>
+  {{template "page_list" .}}
   {{template "colophon" .}}
 </main>
 {{template "foot" .}}
+{{- end}}
+
+{{define "page_list" -}}
+<div class="pages">
+  {{range .Pages}}
+  <a href="/p/{{.Key}}?lang={{$.Locale}}">
+    <span class="name">{{.Title}}{{if .Private}} <span class="tag">{{t $.Locale "page.private"}}</span>{{end}}</span>
+    <span class="state s-{{.Status}}"><span class="dot" aria-hidden="true">{{statusIcon .Status}}</span>{{t $.Locale (printf "status.%s" .Status)}}</span>
+  </a>
+  {{end}}
+</div>
 {{- end}}

@@ -60,6 +60,7 @@ Settings come from environment variables. For secrets, set `NAME_FILE` to a file
 | `NOROSHI_DEFAULT_LOCALE` | `en` | `en` or `ko`. Used when neither `?lang=`, a cookie, nor the browser's `Accept-Language` picks one |
 | `NOROSHI_THEME` | `tokyonight` | Colour theme: `tokyonight` (Catppuccin Latte when the system is in light mode), `ink` (also follows the system), `dancheong`, or `klein`. Visitors can switch with `?theme=` |
 | `NOROSHI_DEV_NO_AUTH` | `false` | Turns off admin authentication |
+| `NOROSHI_DEV_EMAIL` | | Email of the dev-mode user, to try `admin.gravatar` without a provider |
 | `NOROSHI_LOG_LEVEL` | `info` | |
 | `TZ` | `UTC` | Time zone for times on the admin pages. Pages use their own `timezone` |
 
@@ -81,23 +82,29 @@ See [deploy/config.example.yaml](deploy/config.example.yaml). Every `key` is a s
 
 All types accept `interval`, `timeout`, `fail_threshold`, `recover_threshold`, and `warn_before`. Durations take Go syntax plus days, for example `90s`, `12h`, or `30d`. `domain_expiry` checks default to a 12 hour interval.
 
+On the admin pages, a check that answers slower than `slow_after` shows as degraded and its latency turns amber. Without `slow_after`, latency turns amber past half the timeout. It turns red from 80% of the timeout.
+
 An expiring certificate or domain only shows up in metrics until it actually expires. A failed RDAP lookup leaves the check's state unchanged.
 
 A `docker` check asks the Docker Engine API about one container: running is up, and when the container has a health check it must also be healthy (`starting` decides nothing). Point it at a read-only socket proxy that allows only `CONTAINERS`, not at the raw socket.
 
 ### Pages, logos, and alerts
 
-Everything that shapes a page lives in the config file:
+Everything that shapes a page, and the admin pages, lives in the config file:
 
 ```yaml
+admin:
+  title: Phomelo
+  logo: https://cdn.example.com/logo.png
+  gravatar: true
 pages:
   - key: default
-    title: Phomelo
-    logo: logo.png          # relative to the config file; also the favicon
+    title: Internal page
+    logo: https://cdn.example.com/logo.png   # fetched once at startup; also the favicon
     visibility: private     # only on the admin listener, after sign-in
   - key: public
     title: Phomelo
-    logo: logo.png
+    logo: logo.png          # a file works too, relative to the config file
     alert: false            # already covered by container alerts elsewhere
     groups:
       - key: game
@@ -113,7 +120,9 @@ pages:
 
 | Field | Where | Effect |
 | -- | -- | -- |
-| `logo` | page | svg, png, jpg, webp, gif, or ico, up to 1 MiB. Shown next to the title and used as the favicon |
+| `logo` | page, `admin` | An http(s) URL, fetched once at startup, or a file path relative to the config file. svg, png, jpg, webp, gif, or ico, up to 1 MiB. Shown next to the title and used as the favicon. If it cannot be loaded, noroshi logs a warning and shows its own mark |
+| `title` | `admin` | Name in the admin masthead and browser tabs. Defaults to `noroshi` |
+| `gravatar` | `admin` | `true` shows each admin's Gravatar, found by a SHA-256 hash of the email in the ID token. Browsers then load those images from gravatar.com. Off by default |
 | `visibility` | page | `public` (default) or `private`. A private page returns 404 on the public listener and is listed at `/pages` on the admin listener |
 | `alert` | page, group, component, check | `false` keeps the check on the page but sets `alert="false"` on its metrics, so the example rules do not page for it. Inner levels override outer ones |
 

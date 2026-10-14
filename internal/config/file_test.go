@@ -310,8 +310,11 @@ pages:
 	}
 
 	for yaml, want := range map[string]string{
-		"pages:\n  - key: a\n    title: A\n    visibility: secret\n": "visibility must be public or private",
-		"pages:\n  - key: a\n    title: A\n    logo: logo.bmp\n":     "logo must be",
+		"pages:\n  - key: a\n    title: A\n    visibility: secret\n":                       "visibility must be public or private",
+		"pages:\n  - key: a\n    title: A\n    logo: logo.bmp\n":                           "logo must be",
+		"admin:\n  logo: logo.bmp\npages:\n  - key: a\n    title: A\n":                     "admin: logo must be",
+		"admin:\n  logo: https://cdn.example.com/logo\npages:\n  - key: a\n    title: A\n": "admin: logo must be",
+		"admin:\n  logo: https:///logo.png\npages:\n  - key: a\n    title: A\n":            "admin: logo is not a valid URL",
 		"pages:\n  - key: a\n    title: A\n    groups:\n      - key: g\n        name: G\n        components:\n          - key: c\n            name: C\n            checks:\n              - key: k\n                type: docker\n                container: x\n                docker_host: http://h:2375\n": "docker_host must start with",
 		"pages:\n  - key: a\n    title: A\n    groups:\n      - key: g\n        name: G\n        components:\n          - key: c\n            name: C\n            checks:\n              - key: k\n                type: docker\n":                                                                           "container must be",
 	} {
@@ -324,7 +327,7 @@ pages:
 func TestLoadFileResolvesLogo(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/config.yaml"
-	if err := os.WriteFile(path, []byte("pages:\n  - key: a\n    title: A\n    visibility: private\n    logo: brand/logo.png\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("admin:\n  title: Home\n  logo: brand/admin.svg\npages:\n  - key: a\n    title: A\n    visibility: private\n    logo: brand/logo.png\n  - key: b\n    title: B\n    logo: https://cdn.example.com/img/logo.PNG?v=2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	f, err := LoadFile(path)
@@ -333,5 +336,11 @@ func TestLoadFileResolvesLogo(t *testing.T) {
 	}
 	if f.Pages[0].Logo != dir+"/brand/logo.png" || !f.Pages[0].Private() {
 		t.Fatalf("got %+v", f.Pages[0])
+	}
+	if l := f.Pages[1].Logo; l != "https://cdn.example.com/img/logo.PNG?v=2" || LogoExt(l) != ".png" {
+		t.Fatalf("URL logo: %q", l)
+	}
+	if f.Admin.Logo != dir+"/brand/admin.svg" || f.Admin.Title.Get("en") != "Home" {
+		t.Fatalf("admin: %+v", f.Admin)
 	}
 }

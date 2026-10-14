@@ -211,7 +211,7 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 func (a *Auth) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.env.DevNoAuth {
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, &User{Name: "dev"})))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, &User{Name: "dev", Email: a.env.DevEmail})))
 			return
 		}
 		var u User

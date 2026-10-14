@@ -62,7 +62,44 @@ type Server struct {
 	bg         sync.WaitGroup
 
 	pages map[string]PageMeta
+	admin AdminMeta
 }
+
+// AdminMeta is what the config file says about the admin pages.
+type AdminMeta struct {
+	Title i18n.Text
+	Logo  *Logo
+	// Gravatar shows each admin's Gravatar image. The browser then asks
+	// gravatar.com for a hash of the admin's email address.
+	Gravatar bool
+}
+
+// SetAdmin records the admin title, logo, and avatar setting.
+func (s *Server) SetAdmin(m AdminMeta) { s.admin = m }
+
+func (s *Server) brandTitle(locale string) string {
+	if t := s.admin.Title.Get(locale); t != "" {
+		return t
+	}
+	return "noroshi"
+}
+
+func (s *Server) brandLogoURL() string {
+	if l := s.admin.Logo; l != nil {
+		return "/admin/logo?v=" + l.Version
+	}
+	return asset("favicon.svg")
+}
+
+// gravatarURL is the Gravatar image for an email address. d=blank returns a
+// transparent image when the address has none, so the initial underneath
+// shows through.
+func gravatarURL(email string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return gravatarOrigin + "/avatar/" + hex.EncodeToString(sum[:]) + "?s=64&d=blank"
+}
+
+const gravatarOrigin = "https://gravatar.com"
 
 // PageMeta is what the config file says about a page beyond its content.
 type PageMeta struct {
@@ -75,6 +112,17 @@ type Logo struct {
 	Data        []byte
 	ContentType string
 	Version     string
+}
+
+// DefaultLogo is the bundled noroshi mark, used when a page's logo file
+// cannot be read.
+func DefaultLogo() *Logo {
+	b, err := staticFS.ReadFile("static/favicon.svg")
+	if err != nil {
+		panic(err)
+	}
+	sum := sha256.Sum256(b)
+	return &Logo{Data: b, ContentType: "image/svg+xml", Version: hex.EncodeToString(sum[:])[:10]}
 }
 
 // SetPages records page visibility and logos from the config file.
@@ -190,9 +238,11 @@ var funcs = template.FuncMap{
 	"glyph":      glyph,
 	"statusIcon": statusIcon,
 	"favicon":    favicon,
+	"initial":    initial,
+	"breakable":  breakable,
 	"asset":      asset,
 	"fmtRange":   fmtRange,
-	"stateGlyph": stateGlyph,
+	"stateIcon":  stateIcon,
 	"tipHead":    tipHead,
 	"tipDate":    tipDate,
 	"tipNote":    tipNote,
@@ -284,6 +334,44 @@ func favicon(v any) string {
 	return asset("favicon.svg")
 }
 
+// docTitle joins the parts of a browser tab title, the name first and then
+// what the tab shows: "Phomelo - Incidents".
+func docTitle(parts ...string) string {
+	var keep []string
+	for _, p := range parts {
+		if p != "" {
+			keep = append(keep, p)
+		}
+	}
+	return strings.Join(keep, " - ")
+}
+
+// breakable lets a long check target wrap at its separators instead of in
+// the middle of a word: after a path slash or "=", before ".", "?", or "&".
+func breakable(s string) template.HTML {
+	var b strings.Builder
+	for i, r := range s {
+		esc := template.HTMLEscapeString(string(r))
+		switch {
+		case r == '.' || r == '?' || r == '&':
+			b.WriteString("<wbr>" + esc)
+		case r == '=' || (r == '/' && !strings.HasPrefix(s[i+1:], "/")):
+			b.WriteString(esc + "<wbr>")
+		default:
+			b.WriteString(esc)
+		}
+	}
+	return template.HTML(b.String())
+}
+
+// initial is the first letter of a user name, for the account badge.
+func initial(name string) string {
+	for _, r := range name {
+		return strings.ToUpper(string(r))
+	}
+	return "?"
+}
+
 func glyph(s judge.Status) string { return s.Glyph() }
 
 // statusIcon is the filled badge for the overall verdict: a circle in the
@@ -308,16 +396,17 @@ func statusIcon(s judge.Status) template.HTML {
 	return template.HTML(open + disc + symbol + `</svg>`)
 }
 
-func stateGlyph(state string) string {
+// stateIcon draws an admin check state with the status page's badges.
+func stateIcon(state string) template.HTML {
 	switch state {
 	case "up":
-		return "○"
+		return statusIcon(judge.Operational)
 	case "down":
-		return "×"
+		return statusIcon(judge.Major)
 	case "slow":
-		return "△"
+		return statusIcon(judge.Degraded)
 	default:
-		return "–"
+		return statusIcon(judge.NoData)
 	}
 }
 
@@ -398,7 +487,7 @@ type errorView struct {
 }
 
 func (s *Server) renderError(w http.ResponseWriter, r *http.Request, status int, msg string) {
-	s.render(w, status, "error", errorView{Locale: s.locale(w, r), Theme: s.theme(w, r), DocTitle: msg, Message: msg})
+	s.render(w, status, "error", errorView{Locale: s.locale(w, r), Theme: s.theme(w, r), DocTitle: docTitle("noroshi", msg), Message: msg})
 }
 
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
@@ -460,6 +549,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("GET /oauth/callback", s.auth.Callback)
 	mux.HandleFunc("GET /logout", s.auth.Logout)
 	mux.Handle("GET /admin", s.auth.Require(http.HandlerFunc(s.handleAdmin)))
+	mux.Handle("GET /admin/logo", s.auth.Require(http.HandlerFunc(s.handleAdminLogo)))
 	mux.Handle("GET /admin/checks/{id}", s.auth.Require(http.HandlerFunc(s.handleAdminCheck)))
 	mux.Handle("GET /admin/incidents", s.auth.Require(http.HandlerFunc(s.handleIncidents)))
 	mux.Handle("GET /admin/incidents/new", s.auth.Require(http.HandlerFunc(s.handleIncidentNew)))
@@ -480,7 +570,11 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, r, http.StatusNotFound, i18n.T(s.locale(w, r), "page.notfound"))
 	})
-	return securityHeaders(http.NewCrossOriginProtection().Handler(mux))
+	var imgSrc []string
+	if s.admin.Gravatar {
+		imgSrc = append(imgSrc, gravatarOrigin)
+	}
+	return securityHeaders(http.NewCrossOriginProtection().Handler(mux), imgSrc...)
 }
 
 // OpsHandler serves probes and metrics for the platform. Metrics name every
@@ -493,13 +587,17 @@ func (s *Server) OpsHandler() http.Handler {
 	return mux
 }
 
-func securityHeaders(h http.Handler) http.Handler {
+// securityHeaders sets the headers every response gets. imgSrc lists extra
+// origins that pages may load images from.
+func securityHeaders(h http.Handler, imgSrc ...string) http.Handler {
+	csp := "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src " +
+		strings.Join(append([]string{"'self'", "data:"}, imgSrc...), " ") + "; frame-ancestors 'none'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hd := w.Header()
 		hd.Set("X-Content-Type-Options", "nosniff")
 		hd.Set("Referrer-Policy", "same-origin")
 		hd.Set("X-Frame-Options", "DENY")
-		hd.Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'")
+		hd.Set("Content-Security-Policy", csp)
 		h.ServeHTTP(w, r)
 	})
 }
@@ -666,7 +764,7 @@ type componentView struct {
 func (s *Server) pageView(d *pageData, locale, theme string, multi, admin bool) pageView {
 	title := d.Page.Title.Get(locale)
 	v := pageView{
-		Locale: locale, Theme: theme, DocTitle: title, Title: title, Multi: multi,
+		Locale: locale, Theme: theme, DocTitle: docTitle(title, i18n.T(locale, "page.doc")), Title: title, Multi: multi,
 		Logo: s.logoURL(d.Page.Key), Home: "/", Private: s.private(d.Page.Key),
 		LivePath: "/p/" + d.Page.Key + "/live?lang=" + locale,
 		Window:   Window, Overall: d.Overall, UpdatedAt: d.UpdatedAt, Loc: d.Loc,
@@ -703,6 +801,12 @@ func (s *Server) pageView(d *pageData, locale, theme string, multi, admin bool) 
 	return v
 }
 
+type pageItem struct {
+	Key, Title string
+	Status     judge.Status
+	Private    bool
+}
+
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	locale := s.locale(w, r)
 	pages, err := s.store.Pages(r.Context())
@@ -721,25 +825,31 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		s.render(w, http.StatusOK, "page", s.pageView(d, locale, s.theme(w, r), false, false))
 		return
 	}
-	type item struct {
-		Key, Title string
-		Status     judge.Status
-		Private    bool
-	}
-	view := struct {
-		Locale, Theme, DocTitle string
-		Admin                   bool
-		Pages                   []item
-	}{Locale: locale, Theme: s.theme(w, r), DocTitle: i18n.T(locale, "page.list"), Admin: admin}
+	var items []pageItem
 	for _, p := range pages {
 		d, err := s.loadPage(r.Context(), p)
 		if err != nil {
 			s.fail(w, r, err)
 			return
 		}
-		view.Pages = append(view.Pages, item{Key: p.Key, Title: p.Title.Get(locale), Status: d.Overall, Private: s.private(p.Key)})
+		items = append(items, pageItem{Key: p.Key, Title: p.Title.Get(locale), Status: d.Overall, Private: s.private(p.Key)})
 	}
-	s.render(w, http.StatusOK, "pages", view)
+	if admin {
+		base, err := s.adminBase(w, r, "pages")
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.render(w, http.StatusOK, "admin_pages", struct {
+			adminBase
+			Pages []pageItem
+		}{base, items})
+		return
+	}
+	s.render(w, http.StatusOK, "pages", struct {
+		Locale, Theme, DocTitle string
+		Pages                   []pageItem
+	}{locale, s.theme(w, r), docTitle("noroshi", i18n.T(locale, "page.list")), items})
 }
 
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
@@ -845,8 +955,6 @@ type adminRow struct {
 	Target      string
 	StateKey    string
 	StateLabel  string
-	Slow        bool
-	SlowLabel   string
 	Streak      string
 	Since       string
 	LastRun     string
@@ -855,62 +963,89 @@ type adminRow struct {
 	ResultClass string
 	Expiry      string
 	ExpiryClass string
+
+	LatencyClass string
+	LatencyTip   string
 }
 
 type adminBase struct {
 	Locale     string
 	Theme      string
 	DocTitle   string
+	Brand      string
+	Logo       string
+	Favicon    string
 	Section    string
 	UserName   string
+	Avatar     string
 	Dev        bool
+	ProberKey  string
+	ProberText string
 	ProberLine string
 }
 
 func (s *Server) adminBase(w http.ResponseWriter, r *http.Request, section string) (adminBase, error) {
 	locale := s.locale(w, r)
-	b := adminBase{Locale: locale, Theme: s.theme(w, r), DocTitle: i18n.T(locale, "admin.title"), Section: section, Dev: s.auth.DevMode()}
+	brand := s.brandTitle(locale)
+	b := adminBase{
+		Locale: locale, Theme: s.theme(w, r), DocTitle: docTitle(brand, i18n.T(locale, "admin.nav_"+section)),
+		Brand: brand, Logo: s.brandLogoURL(), Section: section, Dev: s.auth.DevMode(),
+	}
+	b.Favicon = b.Logo
 	if u := auth.UserFrom(r.Context()); u != nil {
 		b.UserName = u.Name
+		if s.admin.Gravatar && u.Email != "" {
+			b.Avatar = gravatarURL(u.Email)
+		}
 	}
 	sess, err := s.store.LastSession(r.Context())
 	if err != nil {
 		return b, err
 	}
-	prober := i18n.T(locale, "admin.prober") + ": "
+	state := "admin.prober_none"
+	b.ProberKey = "none"
 	switch {
 	case s.leader.IsLeader():
-		prober += i18n.T(locale, "admin.this_leader")
+		b.ProberKey, state = "leader", "admin.this_leader"
 	case sess != nil && time.Since(sess.LastSeenAt) < 2*time.Minute:
-		prober += i18n.T(locale, "admin.other_leader")
-	case sess == nil:
-		prober += i18n.T(locale, "admin.prober_none")
-	default:
-		prober += i18n.T(locale, "admin.prober_stopped")
+		b.ProberKey, state = "other", "admin.other_leader"
+	case sess != nil:
+		b.ProberKey, state = "stopped", "admin.prober_stopped"
 	}
+	b.ProberText = i18n.T(locale, "admin.prober") + ": " + i18n.T(locale, state)
+	b.ProberLine = b.ProberText
 	if sess != nil {
-		prober += fmt.Sprintf(". %s %s (%s)", i18n.T(locale, "admin.prober_seen"),
+		b.ProberLine += fmt.Sprintf(". %s %s (%s)", i18n.T(locale, "admin.prober_seen"),
 			sess.LastSeenAt.Local().Format("2006-01-02 15:04:05"), sess.Instance)
 	}
-	b.ProberLine = prober
 	return b, nil
 }
 
 func (s *Server) adminRow(locale string, c store.AdminCheck) adminRow {
 	row := adminRow{
-		ID: c.ID, Page: c.PageTitle.Get(locale), PageKey: c.PageKey, Component: c.ComponentName.Get(locale),
+		LatencyTip: latencyTip(locale, c.Spec),
+		ID:         c.ID, Page: c.PageTitle.Get(locale), PageKey: c.PageKey, Component: c.ComponentName.Get(locale),
 		Key: c.Key, Type: c.Type, Target: c.Spec.Target(), StateKey: string(judge.Unknown),
 		Since: "-", LastRun: "-", Latency: "-", Result: "-", Expiry: "-",
-		StateLabel: i18n.T(locale, "state.unknown"), SlowLabel: i18n.T(locale, "state.slow"),
+		StateLabel: i18n.T(locale, "state.unknown"),
 	}
 	st := c.State
 	if st == nil {
 		return row
 	}
 	row.StateKey = string(st.State.State)
+	if st.Degraded && st.State.State == judge.Up {
+		// A slow but working check shows as degraded rather than up.
+		row.StateKey = "slow"
+	}
 	row.StateLabel = i18n.T(locale, "state."+row.StateKey)
-	row.Slow = st.Degraded
-	row.Streak = fmt.Sprintf(i18n.T(locale, "admin.streak_fmt"), st.ConsecutiveOK, st.ConsecutiveFail)
+	// One of the two counts is always zero, so only the running one is shown.
+	switch {
+	case st.ConsecutiveFail > 0:
+		row.Streak = fmt.Sprintf(i18n.T(locale, "admin.streak_fail"), st.ConsecutiveFail)
+	case st.ConsecutiveOK > 0:
+		row.Streak = fmt.Sprintf(i18n.T(locale, "admin.streak_ok"), st.ConsecutiveOK)
+	}
 	if !st.Since.IsZero() {
 		row.Since = ago(st.Since)
 	}
@@ -919,6 +1054,7 @@ func (s *Server) adminRow(locale string, c store.AdminCheck) adminRow {
 	}
 	if st.LastLatencyMS != nil {
 		row.Latency = fmt.Sprintf("%d ms", *st.LastLatencyMS)
+		row.LatencyClass = latencyClass(*st.LastLatencyMS, c.Spec)
 	}
 	if st.LastDetail != "" {
 		row.Result = st.LastDetail
@@ -957,6 +1093,38 @@ func (s *Server) adminRow(locale string, c store.AdminCheck) adminRow {
 		row.ExpiryClass = worst
 	}
 	return row
+}
+
+// latencyClass colours a latency against the check's own limits: amber
+// above slow_after (half the timeout when slow_after is unset), red from 80%
+// of the timeout, where the check is close to failing.
+func latencyClass(ms int, c config.Check) string {
+	warn, bad := latencyLimits(c)
+	d := time.Duration(ms) * time.Millisecond
+	switch {
+	case bad > 0 && d >= bad:
+		return "t-bad"
+	case warn > 0 && d > warn:
+		return "t-warn"
+	}
+	return ""
+}
+
+func latencyLimits(c config.Check) (warn, bad time.Duration) {
+	t := c.Timeout.Duration
+	warn = c.SlowAfter.Duration
+	if warn == 0 {
+		warn = t / 2
+	}
+	return warn, t * 8 / 10
+}
+
+func latencyTip(locale string, c config.Check) string {
+	warn, bad := latencyLimits(c)
+	if bad == 0 {
+		return ""
+	}
+	return fmt.Sprintf(i18n.T(locale, "admin.latency_tip"), warn, bad)
 }
 
 func ago(t time.Time) string {
@@ -1010,7 +1178,7 @@ func rank(state string) int {
 }
 
 type resultView struct {
-	At, Class, Label, Latency, Detail string
+	At, Class, Label, Latency, LatencyClass, Detail string
 }
 
 func (s *Server) handleAdminCheck(w http.ResponseWriter, r *http.Request) {
@@ -1038,6 +1206,8 @@ func (s *Server) handleAdminCheck(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	row := s.adminRow(base.Locale, *c)
+	base.DocTitle = docTitle(base.Brand, row.Component+" / "+row.Key)
 	view := struct {
 		adminBase
 		Row        adminRow
@@ -1047,16 +1217,17 @@ func (s *Server) handleAdminCheck(w http.ResponseWriter, r *http.Request) {
 		Results    []resultView
 	}{
 		adminBase:  base,
-		Row:        s.adminRow(base.Locale, *c),
+		Row:        row,
 		Interval:   c.Spec.Interval.String(),
 		Timeout:    c.Spec.Timeout.String(),
 		Thresholds: fmt.Sprintf(i18n.T(base.Locale, "admin.thresh_fmt"), c.Spec.FailThreshold, c.Spec.RecoverThreshold),
 	}
 	for _, res := range results {
 		rv := resultView{
-			At:      res.At.Local().Format("2006-01-02 15:04:05"),
-			Latency: fmt.Sprintf("%d ms", res.LatencyMS),
-			Detail:  res.Detail,
+			At:           res.At.Local().Format("2006-01-02 15:04:05"),
+			Latency:      fmt.Sprintf("%d ms", res.LatencyMS),
+			Detail:       res.Detail,
+			LatencyClass: latencyClass(res.LatencyMS, c.Spec),
 		}
 		switch {
 		case res.Skipped:

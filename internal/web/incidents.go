@@ -157,7 +157,7 @@ func (s *Server) handlePublicIncident(w http.ResponseWriter, r *http.Request) {
 	}
 	logo := s.logoURL(p.Key)
 	s.render(w, http.StatusOK, "incident", incidentPage{
-		Locale: locale, Theme: s.theme(w, r), DocTitle: in.Title + " · " + p.Title.Get(locale),
+		Locale: locale, Theme: s.theme(w, r), DocTitle: docTitle(p.Title.Get(locale), in.Title),
 		PageTitle: p.Title.Get(locale), Home: home, Logo: logo, Favicon: logo, Inc: iv,
 	})
 }
@@ -174,12 +174,24 @@ func (s *Server) handleLogo(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	writeLogo(w, meta.Logo)
+}
+
+func (s *Server) handleAdminLogo(w http.ResponseWriter, r *http.Request) {
+	if s.admin.Logo == nil {
+		http.NotFound(w, r)
+		return
+	}
+	writeLogo(w, s.admin.Logo)
+}
+
+func writeLogo(w http.ResponseWriter, l *Logo) {
 	h := w.Header()
-	h.Set("Content-Type", meta.Logo.ContentType)
+	h.Set("Content-Type", l.ContentType)
 	h.Set("Cache-Control", "public, max-age=86400")
 	// An SVG logo is a document of its own; it gets no scripts or requests.
 	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
-	w.Write(meta.Logo.Data) //nolint:errcheck
+	w.Write(l.Data) //nolint:errcheck
 }
 
 // ---- admin ----
@@ -372,6 +384,7 @@ func (s *Server) pageByKey(ctx context.Context, key string) (*store.PageRow, err
 
 func (s *Server) renderNew(w http.ResponseWriter, status int, base adminBase, p *store.PageRow, fv formView) {
 	fv.Action, fv.Create, fv.Submit = "/admin/incidents", true, i18n.T(base.Locale, "admin.incident_create")
+	base.DocTitle = docTitle(base.Brand, i18n.T(base.Locale, "admin.incident_new"))
 	s.render(w, status, "admin_incident_new", struct {
 		adminBase
 		PageTitle string
@@ -481,6 +494,7 @@ func (s *Server) loadIncident(w http.ResponseWriter, r *http.Request, locale str
 }
 
 func (s *Server) renderIncident(w http.ResponseWriter, status int, base adminBase, in *store.Incident, fv formView) {
+	base.DocTitle = docTitle(base.Brand, in.Title)
 	fv.Action = fmt.Sprintf("/admin/incidents/%d/updates", in.ID)
 	fv.Resolved = !in.Open()
 	fv.Submit = i18n.T(base.Locale, "admin.incident_post")

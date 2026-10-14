@@ -12,13 +12,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -131,17 +130,39 @@ func serve() error {
 		}
 		targets = append(targets, notify.Target{Key: n.Key, Type: n.Type, URL: u, Locale: n.Locale})
 	}
+	// Pages often share one logo, so each source is read or fetched once.
+	type loaded struct {
+		logo *web.Logo
+		err  error
+	}
+	logos := map[string]loaded{}
+	logo := func(src string) (*web.Logo, error) {
+		l, ok := logos[src]
+		if !ok {
+			l.logo, l.err = loadLogo(src)
+			logos[src] = l
+		}
+		return l.logo, l.err
+	}
 	pageNotify := map[string][]string{}
 	pageMeta := map[string]web.PageMeta{}
 	for _, p := range file.Pages {
 		pageNotify[p.Key] = p.Notify
 		meta := web.PageMeta{Private: p.Private()}
 		if p.Logo != "" {
-			if meta.Logo, err = loadLogo(p.Logo); err != nil {
-				return fmt.Errorf("page %s: %w", p.Key, err)
+			if meta.Logo, err = logo(p.Logo); err != nil {
+				// A missing logo should not take the status page down with it.
+				log.Warn("page logo unavailable, using the default", "page", p.Key, "err", err)
+				meta.Logo = web.DefaultLogo()
 			}
 		}
 		pageMeta[p.Key] = meta
+	}
+	admin := web.AdminMeta{Title: file.Admin.Title, Gravatar: file.Admin.Gravatar}
+	if file.Admin.Logo != "" {
+		if admin.Logo, err = logo(file.Admin.Logo); err != nil {
+			log.Warn("admin logo unavailable, using the default", "err", err)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -168,6 +189,7 @@ func serve() error {
 	}
 	srv.SetNotifiers(targets, pageNotify)
 	srv.SetPages(pageMeta)
+	srv.SetAdmin(admin)
 	if env.DevNoAuth {
 		log.Warn("NOROSHI_DEV_NO_AUTH is set: the admin pages require no sign-in")
 	}
@@ -227,23 +249,66 @@ var logoTypes = map[string]string{
 	".webp": "image/webp", ".gif": "image/gif", ".ico": "image/x-icon",
 }
 
-// loadLogo reads a page logo once at startup.
-func loadLogo(path string) (*web.Logo, error) {
+const maxLogo = 1 << 20
+
+// loadLogo reads a page or admin logo once at startup, from a file or an
+// http(s) URL.
+func loadLogo(src string) (*web.Logo, error) {
+	var b []byte
+	var err error
+	if config.IsURL(src) {
+		b, err = fetchLogo(src)
+	} else {
+		b, err = readLogo(src)
+	}
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(b)
+	return &web.Logo{
+		Data:        b,
+		ContentType: logoTypes[config.LogoExt(src)],
+		Version:     hex.EncodeToString(sum[:])[:10],
+	}, nil
+}
+
+func readLogo(path string) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("logo: %w", err)
 	}
-	if info.Size() > 1<<20 {
+	if info.Size() > maxLogo {
 		return nil, fmt.Errorf("logo %s is larger than 1 MiB", path)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("logo: %w", err)
 	}
-	sum := sha256.Sum256(b)
-	return &web.Logo{
-		Data:        b,
-		ContentType: logoTypes[strings.ToLower(filepath.Ext(path))],
-		Version:     hex.EncodeToString(sum[:])[:10],
-	}, nil
+	return b, nil
+}
+
+func fetchLogo(src string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)
+	if err != nil {
+		return nil, fmt.Errorf("logo: %w", err)
+	}
+	req.Header.Set("User-Agent", notify.UserAgent)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("logo: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("logo %s: HTTP %d", src, resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxLogo+1))
+	if err != nil {
+		return nil, fmt.Errorf("logo: %w", err)
+	}
+	if len(b) > maxLogo {
+		return nil, fmt.Errorf("logo %s is larger than 1 MiB", src)
+	}
+	return b, nil
 }

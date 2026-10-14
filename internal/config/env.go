@@ -36,6 +36,7 @@ type Env struct {
 	DefaultLocale string
 	Theme         string
 	DevNoAuth     bool
+	DevEmail      string
 	LogLevel      string
 }
 
@@ -67,6 +68,7 @@ func LoadEnv() (Env, error) {
 		DefaultLocale:    or(i18n.Normalize(get("NOROSHI_DEFAULT_LOCALE")), "en"),
 		LogLevel:         or(get("NOROSHI_LOG_LEVEL"), "info"),
 		Theme:            or(get("NOROSHI_THEME"), "tokyonight"),
+		DevEmail:         get("NOROSHI_DEV_EMAIL"),
 	}
 	if v := get("NOROSHI_DEV_NO_AUTH"); v != "" {
 		b, err := strconv.ParseBool(v)

@@ -85,19 +85,18 @@ func TestPublicTemplates(t *testing.T) {
 	if v := s.pageView(samplePage(), "ko", "", false, false); v.Groups[0].OK != 1 || v.Groups[1].OK != 0 || v.Groups[1].Total != 1 {
 		t.Fatalf("group counts wrong: %+v", v.Groups)
 	}
+	items := []pageItem{{"home", "Home", judge.Operational, true}}
 	render(t, s, "pages", struct {
 		Locale, Theme, DocTitle string
-		Admin                   bool
-		Pages                   []struct {
-			Key, Title string
-			Status     judge.Status
-			Private    bool
-		}
-	}{Locale: "ko", DocTitle: "x", Admin: true, Pages: []struct {
-		Key, Title string
-		Status     judge.Status
-		Private    bool
-	}{{"home", "Home", judge.Operational, true}}})
+		Pages                   []pageItem
+	}{"ko", "", "x", items})
+	out := render(t, s, "admin_pages", struct {
+		adminBase
+		Pages []pageItem
+	}{adminBase{Locale: "ko", DocTitle: "admin", Section: "pages", Brand: "Phomelo", Logo: "/admin/logo?v=1", UserName: "dev", Dev: true}, items})
+	if !strings.Contains(out, `href="/pages" aria-current="page"`) || !strings.Contains(out, `href="/p/home?lang=ko"`) || !strings.Contains(out, `class="colophon"`) {
+		t.Fatal("admin page list lacks the pages tab or the page link")
+	}
 	render(t, s, "error", errorView{Locale: "en", DocTitle: "x", Message: "Page not found"})
 }
 
@@ -119,13 +118,42 @@ func TestAdminTemplates(t *testing.T) {
 	if row.StateKey != "down" || row.ResultClass != "t-bad" || row.ExpiryClass != "t-warn" {
 		t.Fatalf("admin row: %+v", row)
 	}
-	base := adminBase{Locale: "ko", DocTitle: "admin", UserName: "dev", Dev: true, ProberLine: "prober"}
+	base := adminBase{Locale: "ko", DocTitle: "admin", Section: "checks", Brand: "Phomelo", Logo: "/admin/logo?v=1", UserName: "dev", Dev: true, ProberKey: "leader", ProberText: "prober", ProberLine: "prober"}
 	out := render(t, s, "admin", struct {
 		adminBase
 		Rows []adminRow
-	}{base, []adminRow{row, s.adminRow("en", store.AdminCheck{Key: "new", Type: "http"})}})
-	if !strings.Contains(out, `class="cell-down"`) || !strings.Contains(out, "×") {
+	}{base, []adminRow{row, s.adminRow("en", store.AdminCheck{Key: "new", Type: "http"}), {StateKey: "slow", StateLabel: "Degraded"}}})
+	if !strings.Contains(out, `<span class="cs cs-slow">`) {
+		t.Fatal("slow row not marked")
+	}
+	if !strings.Contains(out, `class="cell-down"`) || !strings.Contains(out, `<path d="M6.8 6.8l6.4 6.4`) {
 		t.Fatal("down row not marked")
+	}
+	spec := config.Check{Timeout: config.Duration{Duration: 10 * time.Second}}
+	slow := spec
+	slow.SlowAfter = config.Duration{Duration: 2 * time.Second}
+	for _, c := range []struct {
+		ms   int
+		spec config.Check
+		want string
+	}{{300, spec, ""}, {5001, spec, "t-warn"}, {8000, spec, "t-bad"}, {2000, slow, ""}, {2001, slow, "t-warn"}, {9000, slow, "t-bad"}} {
+		if got := latencyClass(c.ms, c.spec); got != c.want {
+			t.Errorf("latencyClass(%d, slow_after %s) = %q, want %q", c.ms, c.spec.SlowAfter.Duration, got, c.want)
+		}
+	}
+	if got, want := string(breakable("https://h.io/a?x=1&y=<2>")), "https://<wbr>h<wbr>.io/<wbr>a<wbr>?x=<wbr>1<wbr>&amp;y=<wbr>&lt;2&gt;"; got != want {
+		t.Errorf("breakable = %s, want %s", got, want)
+	}
+	if row.Streak != "연속 실패 3회" {
+		t.Errorf("streak = %q", row.Streak)
+	}
+	if a, b := gravatarURL(" Me@Example.com "), gravatarURL("me@example.com"); a != b || !strings.HasPrefix(a, "https://gravatar.com/avatar/") || len(a) != len("https://gravatar.com/avatar/?s=64&d=blank")+64 {
+		t.Fatalf("gravatar: %s %s", a, b)
+	}
+	for _, want := range []string{`src="/admin/logo?v=1"`, `<span class="title">Phomelo</span>`, `<span class="avatar" aria-hidden="true">D</span>`, `href="/admin" aria-current="page"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("admin masthead lacks %s", want)
+		}
 	}
 	render(t, s, "admin_check", struct {
 		adminBase
@@ -334,5 +362,12 @@ func TestTickTooltip(t *testing.T) {
 	empty := uptime.Day{Date: d.Date, Worst: judge.NoData}
 	if tipHead("ko", empty) != "데이터 없음" || tipNote("ko", empty) != "" {
 		t.Fatalf("no data: %q %q", tipHead("ko", empty), tipNote("ko", empty))
+	}
+}
+
+func TestDefaultLogo(t *testing.T) {
+	l := DefaultLogo()
+	if l.ContentType != "image/svg+xml" || len(l.Data) == 0 || len(l.Version) != 10 {
+		t.Fatalf("default logo: %s %d %q", l.ContentType, len(l.Data), l.Version)
 	}
 }

@@ -11,6 +11,13 @@ notifiers:
     url_env: NOROSHI_WEBHOOK_TEAMS
     locale: ko
 
+admin:
+  title:
+    ko: noroshi 데모
+    en: noroshi demo
+  logo: demo-logo.svg
+  gravatar: true
+
 pages:
   - key: demo
     title:
@@ -44,6 +51,18 @@ pages:
                 type: domain_expiry
                 domain: example.com
                 interval: 1h
+          - key: slow
+            name:
+              ko: 일부러 느린 서비스
+              en: Deliberately slow
+            description:
+              ko: slow_after를 50ms로 낮춰 둬서 늘 성능 저하로 보인다
+              en: slow_after is set to 50ms, so it always shows as degraded
+            checks:
+              - key: https
+                type: http
+                url: https://example.com/
+                slow_after: 50ms
       - key: infra
         name:
           ko: 인프라
