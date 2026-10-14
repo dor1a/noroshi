@@ -104,3 +104,50 @@ func TestSafeNext(t *testing.T) {
 		}
 	}
 }
+
+func TestLogout(t *testing.T) {
+	var endSession string
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"issuer":"`+srv.URL+`","authorization_endpoint":"`+srv.URL+`/authorize","token_endpoint":"`+srv.URL+`/token","jwks_uri":"`+srv.URL+`/jwks","end_session_endpoint":"`+endSession+`"}`)
+	}))
+	defer srv.Close()
+
+	logout := func(a *Auth, idToken string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/logout", nil)
+		if idToken != "" {
+			s, _ := a.sign(User{Subject: "u1", Expires: time.Now().Add(time.Hour), IDToken: idToken})
+			req.AddCookie(&http.Cookie{Name: sessionCookie, Value: s})
+		}
+		rec := httptest.NewRecorder()
+		a.Logout(rec, req)
+		return rec
+	}
+	newProviderAuth := func() *Auth {
+		a := newAuth()
+		a.env.OIDCIssuer, a.env.OIDCClientID = srv.URL, "noroshi"
+		return a
+	}
+
+	endSession = srv.URL + "/end-session/"
+	a := newProviderAuth()
+	rec := logout(a, "tok")
+	loc := rec.Header().Get("Location")
+	for _, want := range []string{srv.URL + "/end-session/?", "id_token_hint=tok", "client_id=noroshi", "post_logout_redirect_uri=https%3A%2F%2Fstatus-admin.example.com%2Fsigned-out"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("logout redirect %q lacks %q", loc, want)
+		}
+	}
+	if c := rec.Result().Cookies(); len(c) != 1 || c[0].MaxAge >= 0 {
+		t.Fatalf("session cookie not cleared: %+v", c)
+	}
+	if loc := logout(a, "").Header().Get("Location"); strings.Contains(loc, "post_logout_redirect_uri") || !strings.Contains(loc, "client_id=noroshi") {
+		t.Fatalf("logout without an ID token: %q", loc)
+	}
+
+	endSession = ""
+	if loc := logout(newProviderAuth(), "tok").Header().Get("Location"); loc != "/signed-out" {
+		t.Fatalf("provider without end_session_endpoint: %q", loc)
+	}
+}

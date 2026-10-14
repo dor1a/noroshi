@@ -48,8 +48,19 @@ type File struct {
 	Defaults  Defaults   `yaml:"defaults" json:"-"`
 	Notifiers []Notifier `yaml:"notifiers" json:"-"`
 	Admin     Admin      `yaml:"admin" json:"-"`
+	Footer    Footer     `yaml:"footer" json:"-"`
 	Pages     []Page     `yaml:"pages" json:"pages"`
 }
+
+// Footer is the line at the bottom of every page.
+type Footer struct {
+	// PoweredBy shows "Powered by noroshi" with a link to the source. It is
+	// on unless set to false.
+	PoweredBy *bool `yaml:"powered_by"`
+}
+
+// ShowPoweredBy reports whether pages credit noroshi.
+func (f Footer) ShowPoweredBy() bool { return f.PoweredBy == nil || *f.PoweredBy }
 
 // Admin is how the admin pages present themselves. Every field is
 // optional; without them the admin pages carry the noroshi name and mark.

@@ -66,6 +66,8 @@ Settings come from environment variables. For secrets, set `NAME_FILE` to a file
 
 The OIDC redirect URI to register with your provider is `<NOROSHI_ADMIN_URL>/oauth/callback`. The admin group is matched with or without a leading `/`, so Keycloak's full group paths work.
 
+Signing out sends the browser to the provider's `end_session_endpoint` when discovery lists one, so the provider session ends too and the next visit asks for a login again. Register `<NOROSHI_ADMIN_URL>/signed-out` as a post-logout redirect URI to come back to noroshi afterwards. Whether the provider ends its own session depends on its logout settings: in authentik, give the provider an invalidation flow with a User Logout stage, such as `default-invalidation-flow`.
+
 Outbound HTTPS checks use the system CA bundle. To trust a private CA, mount a bundle and set `SSL_CERT_FILE`.
 
 ### Config file
@@ -123,6 +125,7 @@ pages:
 | `logo` | page, `admin` | An http(s) URL, fetched once at startup, or a file path relative to the config file. svg, png, jpg, webp, gif, or ico, up to 1 MiB. Shown next to the title and used as the favicon. If it cannot be loaded, noroshi logs a warning and shows its own mark |
 | `title` | `admin` | Name in the admin masthead and browser tabs. Defaults to `noroshi` |
 | `gravatar` | `admin` | `true` shows each admin's Gravatar, found by a SHA-256 hash of the email in the ID token. Browsers then load those images from gravatar.com. Off by default |
+| `powered_by` | `footer` | `false` hides "Powered by noroshi" and the source link at the bottom of every page. On by default |
 | `visibility` | page | `public` (default) or `private`. A private page returns 404 on the public listener and is listed at `/pages` on the admin listener |
 | `alert` | page, group, component, check | `false` keeps the check on the page but sets `alert="false"` on its metrics, so the example rules do not page for it. Inner levels override outer ones |
 

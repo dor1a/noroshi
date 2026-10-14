@@ -20,6 +20,27 @@
 {{if .Dev}}<p class="notice warn">{{t .Locale "admin.dev_mode"}}</p>{{end}}
 {{- end}}
 
+{{define "signed_out" -}}
+{{template "head" .}}
+<main class="sheet">
+  <header class="mast admin-mast">
+    <span class="brand">
+      <img class="logo" src="{{.Logo}}" alt="">
+      <span class="title">{{.Brand}}</span>
+      <span class="tag">{{t .Locale "admin.badge"}}</span>
+    </span>
+    <div class="account">{{template "lang" .}}</div>
+  </header>
+  <section class="signed-out">
+    <h1>{{t .Locale "admin.signed_out_title"}}</h1>
+    <p>{{t .Locale "admin.signed_out_body"}}</p>
+    <p><a class="button primary" href="/admin">{{t .Locale "admin.sign_in_again"}}</a></p>
+  </section>
+  {{template "colophon" .}}
+</main>
+{{template "foot" .}}
+{{- end}}
+
 {{define "admin_pages" -}}
 {{template "head" .}}
 <main class="sheet wide">

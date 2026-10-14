@@ -190,6 +190,7 @@ func serve() error {
 	srv.SetNotifiers(targets, pageNotify)
 	srv.SetPages(pageMeta)
 	srv.SetAdmin(admin)
+	srv.SetFooter(file.Footer.ShowPoweredBy())
 	if env.DevNoAuth {
 		log.Warn("NOROSHI_DEV_NO_AUTH is set: the admin pages require no sign-in")
 	}

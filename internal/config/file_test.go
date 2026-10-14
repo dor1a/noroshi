@@ -340,6 +340,9 @@ func TestLoadFileResolvesLogo(t *testing.T) {
 	if l := f.Pages[1].Logo; l != "https://cdn.example.com/img/logo.PNG?v=2" || LogoExt(l) != ".png" {
 		t.Fatalf("URL logo: %q", l)
 	}
+	if !f.Footer.ShowPoweredBy() {
+		t.Fatal("footer credit is on by default")
+	}
 	if f.Admin.Logo != dir+"/brand/admin.svg" || f.Admin.Title.Get("en") != "Home" {
 		t.Fatalf("admin: %+v", f.Admin)
 	}

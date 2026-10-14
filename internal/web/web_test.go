@@ -97,6 +97,20 @@ func TestPublicTemplates(t *testing.T) {
 	if !strings.Contains(out, `href="/pages" aria-current="page"`) || !strings.Contains(out, `href="/p/home?lang=ko"`) || !strings.Contains(out, `class="colophon"`) {
 		t.Fatal("admin page list lacks the pages tab or the page link")
 	}
+	out = render(t, s, "signed_out", struct {
+		Locale, Theme, DocTitle, Brand, Logo, Favicon string
+	}{"ko", "", "x", "Phomelo", "/admin/logo?v=1", "/admin/logo?v=1"})
+	if !strings.Contains(out, "로그아웃했습니다") || !strings.Contains(out, `href="/admin"`) {
+		t.Fatal("signed-out page lacks its message or the sign-in link")
+	}
+	s.SetFooter(false)
+	if out := render(t, s, "pages", struct {
+		Locale, Theme, DocTitle string
+		Pages                   []pageItem
+	}{"ko", "", "x", items}); strings.Contains(out, `class="colophon"`) {
+		t.Fatal("footer shown with powered_by false")
+	}
+	s.SetFooter(true)
 	render(t, s, "error", errorView{Locale: "en", DocTitle: "x", Message: "Page not found"})
 }
 

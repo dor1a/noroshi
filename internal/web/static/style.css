@@ -262,6 +262,9 @@ time { font-variant-numeric: tabular-nums; }
 .admin-mast .brand .title { font-size: 18px; }
 .admin-mast .brand:hover .title { text-decoration: underline; }
 .admin-mast .logo { width: 34px; height: 34px; border-radius: 8px; }
+.signed-out { display: grid; gap: 12px; padding-top: 24px; }
+.signed-out h1 { font-size: 20px; }
+.signed-out p { color: var(--ink-2); }
 .account { display: flex; align-items: center; gap: 14px; font-size: 13.5px; color: var(--mast-sub); }
 .account > * + * { padding-left: 14px; border-left: 1px solid var(--rule); line-height: 1.2; }
 .account a { text-decoration: none; }

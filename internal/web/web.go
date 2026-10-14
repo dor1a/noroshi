@@ -63,7 +63,12 @@ type Server struct {
 
 	pages map[string]PageMeta
 	admin AdminMeta
+
+	hideCredit bool
 }
+
+// SetFooter turns the "Powered by noroshi" line on every page on or off.
+func (s *Server) SetFooter(poweredBy bool) { s.hideCredit = !poweredBy }
 
 // AdminMeta is what the config file says about the admin pages.
 type AdminMeta struct {
@@ -179,7 +184,9 @@ func New(st *store.Store, a *auth.Auth, m *metrics.Metrics, leader Leader, env c
 		cache:    map[string]cachedPage{},
 		sender:   notify.NewSender(),
 	}
-	tpl, err := template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html")
+	tpl, err := template.New("").Funcs(funcs).Funcs(template.FuncMap{
+		"poweredBy": func() bool { return !s.hideCredit },
+	}).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
@@ -539,8 +546,9 @@ func (s *Server) PublicHandler() http.Handler {
 }
 
 // AdminHandler serves login and the admin pages. Everything except the
-// login flow and static files requires a session, so the listener can sit
-// behind a public hostname. Cross-origin form posts are refused.
+// login flow, the signed-out page, the logo, and static files requires a
+// session, so the listener can sit behind a public hostname. Cross-origin
+// form posts are refused.
 func (s *Server) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", staticHandler())
@@ -548,8 +556,11 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("GET /login", s.auth.Login)
 	mux.HandleFunc("GET /oauth/callback", s.auth.Callback)
 	mux.HandleFunc("GET /logout", s.auth.Logout)
+	mux.HandleFunc("GET /signed-out", s.handleSignedOut)
 	mux.Handle("GET /admin", s.auth.Require(http.HandlerFunc(s.handleAdmin)))
-	mux.Handle("GET /admin/logo", s.auth.Require(http.HandlerFunc(s.handleAdminLogo)))
+	// The logo needs no session: the signed-out page shows it, and a logo
+	// request that bounced through login would sign the browser back in.
+	mux.HandleFunc("GET /admin/logo", s.handleAdminLogo)
 	mux.Handle("GET /admin/checks/{id}", s.auth.Require(http.HandlerFunc(s.handleAdminCheck)))
 	mux.Handle("GET /admin/incidents", s.auth.Require(http.HandlerFunc(s.handleIncidents)))
 	mux.Handle("GET /admin/incidents/new", s.auth.Require(http.HandlerFunc(s.handleIncidentNew)))
@@ -1139,6 +1150,15 @@ func ago(t time.Time) string {
 	default:
 		return t.Local().Format("2006-01-02 15:04")
 	}
+}
+
+func (s *Server) handleSignedOut(w http.ResponseWriter, r *http.Request) {
+	locale := s.locale(w, r)
+	brand := s.brandTitle(locale)
+	logo := s.brandLogoURL()
+	s.render(w, http.StatusOK, "signed_out", struct {
+		Locale, Theme, DocTitle, Brand, Logo, Favicon string
+	}{locale, s.theme(w, r), docTitle(brand, i18n.T(locale, "admin.signed_out_title")), brand, logo, logo})
 }
 
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {

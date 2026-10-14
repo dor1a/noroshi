@@ -29,6 +29,10 @@ const (
 	loginCookie   = "noroshi_login"
 	sessionTTL    = 8 * time.Hour
 	loginTTL      = 10 * time.Minute
+
+	// A browser drops a cookie over 4 KiB. The ID token is left out of a
+	// session that would not fit, and logout then goes without a hint.
+	maxSessionCookie = 3800
 )
 
 // User is the signed-in admin.
@@ -37,6 +41,9 @@ type User struct {
 	Name    string    `json:"name"`
 	Email   string    `json:"email"`
 	Expires time.Time `json:"exp"`
+
+	// IDToken is sent back to the provider as id_token_hint on logout.
+	IDToken string `json:"idt,omitempty"`
 }
 
 type ctxKey struct{}
@@ -57,9 +64,10 @@ type Auth struct {
 	secure bool
 	OnErr  ErrorFunc
 
-	mu       sync.Mutex
-	verifier *oidc.IDTokenVerifier
-	oauth    *oauth2.Config
+	mu         sync.Mutex
+	verifier   *oidc.IDTokenVerifier
+	oauth      *oauth2.Config
+	endSession string
 }
 
 // New creates the handler set. The provider is discovered on first use so
@@ -92,6 +100,12 @@ func (a *Auth) client() (*oidc.IDTokenVerifier, *oauth2.Config, error) {
 		return nil, nil, err
 	}
 	a.verifier = p.Verifier(&oidc.Config{ClientID: a.env.OIDCClientID})
+	var meta struct {
+		EndSession string `json:"end_session_endpoint"`
+	}
+	if err := p.Claims(&meta); err == nil {
+		a.endSession = meta.EndSession
+	}
 	a.oauth = &oauth2.Config{
 		ClientID:     a.env.OIDCClientID,
 		ClientSecret: a.env.OIDCClientSecret,
@@ -190,8 +204,14 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 		Name:    firstString(claims, "name", "preferred_username", "email"),
 		Email:   firstString(claims, "email"),
 		Expires: time.Now().Add(sessionTTL),
+		IDToken: raw,
 	}
 	v, err := a.sign(u)
+	if err == nil && len(v) > maxSessionCookie {
+		a.log.Warn("id token too large for the session cookie; logout will not end the provider session cleanly", "bytes", len(raw))
+		u.IDToken = ""
+		v, err = a.sign(u)
+	}
 	if err != nil {
 		a.OnErr(w, r, http.StatusInternalServerError, "error.login_failed")
 		return
@@ -201,10 +221,50 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, ls.Next, http.StatusFound)
 }
 
-// Logout clears the session.
+// Logout clears the session and, when the provider offers RP-initiated
+// logout, ends the provider session as well. Otherwise the next visit to a
+// page that needs a session would sign the browser straight back in. The
+// provider sends the browser back to /signed-out, which needs no session.
 func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
+	var u User
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		if a.verify(c.Value, &u) != nil {
+			u = User{}
+		}
+	}
 	a.clearCookie(w, sessionCookie)
-	http.Redirect(w, r, "/", http.StatusFound)
+	if to := a.providerLogoutURL(u.IDToken); to != "" {
+		http.Redirect(w, r, to, http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, "/signed-out", http.StatusFound)
+}
+
+// providerLogoutURL is the provider's end_session_endpoint for this client,
+// or "" when there is none. The return address needs id_token_hint, so it is
+// left out when the session holds no ID token.
+func (a *Auth) providerLogoutURL(idToken string) string {
+	if a.env.DevNoAuth {
+		return ""
+	}
+	if _, _, err := a.client(); err != nil {
+		return ""
+	}
+	a.mu.Lock()
+	end := a.endSession
+	a.mu.Unlock()
+	u, err := url.Parse(end)
+	if end == "" || err != nil {
+		return ""
+	}
+	q := u.Query()
+	q.Set("client_id", a.env.OIDCClientID)
+	if idToken != "" {
+		q.Set("id_token_hint", idToken)
+		q.Set("post_logout_redirect_uri", a.env.AdminURL+"/signed-out")
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // Require lets signed-in admins through and sends everyone else to login.
