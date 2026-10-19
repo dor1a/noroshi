@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="internal/web/static/favicon.svg" alt="" width="96">
+
 # noroshi
 
 **Health checks, a public status page, and incident updates from one Go binary**

@@ -15,7 +15,6 @@ admin:
   title:
     ko: noroshi 데모
     en: noroshi demo
-  logo: demo-logo.svg
   gravatar: true
 
 pages:
@@ -24,7 +23,6 @@ pages:
       ko: noroshi 데모
       en: noroshi demo
     timezone: Asia/Seoul
-    logo: demo-logo.svg
     notify:
       - discord
       - teams
@@ -103,7 +101,6 @@ pages:
       en: Internal page
     timezone: Asia/Seoul
     visibility: private
-    logo: demo-logo.svg
     groups:
       - key: infra
         name:
