@@ -18,6 +18,7 @@ import (
 type Metrics struct {
 	reg *prometheus.Registry
 
+	pageInfo      *prometheus.GaugeVec
 	checkUp       *prometheus.GaugeVec
 	checkInfo     *prometheus.GaugeVec
 	checkFailure  *prometheus.GaugeVec
@@ -43,6 +44,10 @@ func New(version string) *Metrics {
 	reg := prometheus.NewRegistry()
 	m := &Metrics{
 		reg: reg,
+		pageInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "noroshi_page_info",
+			Help: "Always 1. The page's title and address, for alert messages. Every instance reports it.",
+		}, []string{"page", "title", "url"}),
 		checkUp: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "noroshi_check_up",
 			Help: "Debounced check state: 1 up, 0 down. Absent while unknown. alert=\"false\" marks checks that should not page.",
@@ -91,7 +96,7 @@ func New(version string) *Metrics {
 	build.WithLabelValues(version).Set(1)
 
 	reg.MustRegister(
-		m.checkUp, m.checkInfo, m.checkFailure, m.checkDuration, m.checkLastRun, m.checkInterval,
+		m.pageInfo, m.checkUp, m.checkInfo, m.checkFailure, m.checkDuration, m.checkLastRun, m.checkInterval,
 		m.certExpiry, m.domainExpiry, m.component, m.leader, build,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -142,6 +147,12 @@ func (m *Metrics) CheckRun(l CheckLabels, state judge.CheckState, at time.Time, 
 	if domain != nil {
 		m.domainExpiry.WithLabelValues(l.Page, l.Component, l.Check, alert).Set(float64(domain.Unix()))
 	}
+}
+
+// PageInfo records a page's title and address. It comes from the config,
+// not from the prober, so it survives a change of leader.
+func (m *Metrics) PageInfo(page, title, url string) {
+	m.pageInfo.WithLabelValues(page, title, url).Set(1)
 }
 
 // CheckFailure replaces the failure reason of a check. An empty reason

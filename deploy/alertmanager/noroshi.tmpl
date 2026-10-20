@@ -1,33 +1,65 @@
 {{/*
-  Discord messages for NoroshiCheckDown, one per status page (group_by alertname, page).
-  The symbols match the status page: × down, ○ up. Set your admin address below.
+  noroshi alert messages for Alertmanager, one message per status page
+  (group_by: alertname, page).
+    Discord          title: noroshi.title        message: noroshi.message
+    Microsoft Teams  title: noroshi.teams.title  text:    noroshi.teams.text
+  Set your addresses and time zone in the three templates below.
 */}}
 
+{{ define "noroshi.status_url" }}https://status.example.com{{ end }}
 {{ define "noroshi.admin_url" }}https://status-admin.example.com/admin{{ end }}
+{{ define "noroshi.time" }}{{ (tz "UTC" .t).Format .f }}{{ end }}
 
 {{ define "noroshi.name" }}{{ or .Annotations.name .Labels.component }}{{ end }}
 
 {{ define "noroshi.title" -}}
 {{ if eq .Status "firing" -}}
-× {{ if eq (len .Alerts.Firing) 1 }}{{ template "noroshi.name" (index .Alerts.Firing 0) }} is down{{ else }}{{ len .Alerts.Firing }} checks are down{{ end }}
+🔴 {{ if eq (len .Alerts.Firing) 1 }}{{ template "noroshi.name" (index .Alerts.Firing 0) }} is down{{ else }}{{ len .Alerts.Firing }} checks are down{{ end }}
 {{- with .Alerts.Resolved }}, {{ len . }} back up{{ end }}
 {{- else -}}
-○ {{ if eq (len .Alerts.Resolved) 1 }}{{ template "noroshi.name" (index .Alerts.Resolved 0) }} is back up{{ else }}{{ len .Alerts.Resolved }} checks are back up{{ end }}
+✅ {{ if eq (len .Alerts.Resolved) 1 }}{{ template "noroshi.name" (index .Alerts.Resolved 0) }} is back up{{ else }}{{ len .Alerts.Resolved }} checks are back up{{ end }}
 {{- end }}
 {{- end }}
 
+{{/* The page title and address come from noroshi_page_info; the key and status_url stand in without it. */}}
+{{ define "noroshi.links" }}{{ with index .Alerts 0 }}[{{ or .Annotations.page_title .Labels.page }}]({{ with .Annotations.page_url }}{{ . }}{{ else }}{{ template "noroshi.status_url" }}/p/{{ .Labels.page }}{{ end }}){{ end }} | [Admin]({{ template "noroshi.admin_url" }}){{ end }}
+
+{{/* Discord shows <t:unix:…> in each reader's own time zone. */}}
 {{ define "noroshi.message" -}}
 {{ range .Alerts.Firing -}}
-**× {{ template "noroshi.name" . }}** › {{ .Labels.check }}
+🔴 **{{ template "noroshi.name" . }}** › {{ .Labels.check }}
 {{ with .Annotations.reason }}{{ . }}
 {{ end }}{{ with .Annotations.target }}{{ . }}
 {{ end }}Down since <t:{{ .StartsAt.Unix }}:f> (<t:{{ .StartsAt.Unix }}:R>)
 
 {{ end -}}
 {{ range .Alerts.Resolved -}}
-**○ {{ template "noroshi.name" . }}** › {{ .Labels.check }}
+✅ **{{ template "noroshi.name" . }}** › {{ .Labels.check }}
 Down for {{ (.EndsAt.Sub .StartsAt).Seconds | humanizeDuration }}, <t:{{ .StartsAt.Unix }}:t> → <t:{{ .EndsAt.Unix }}:t>
 
 {{ end -}}
-Page `{{ .CommonLabels.page }}` | [Admin]({{ template "noroshi.admin_url" }})
+{{ template "noroshi.links" . }}
+{{- end }}
+
+{{/* Teams needs a blank line between paragraphs and has no reader-local times. */}}
+{{ define "noroshi.teams.title" }}{{ template "noroshi.title" . }}{{ end }}
+
+{{ define "noroshi.teams.text" -}}
+{{ range .Alerts.Firing -}}
+🔴 **{{ template "noroshi.name" . }}** › {{ .Labels.check }}
+
+{{ with .Annotations.reason }}{{ . }}
+
+{{ end }}{{ with .Annotations.target }}{{ . }}
+
+{{ end }}Down since {{ template "noroshi.time" (dict "t" .StartsAt "f" "2006-01-02 15:04 MST") }}
+
+{{ end -}}
+{{ range .Alerts.Resolved -}}
+✅ **{{ template "noroshi.name" . }}** › {{ .Labels.check }}
+
+Down for {{ (.EndsAt.Sub .StartsAt).Seconds | humanizeDuration }}, {{ template "noroshi.time" (dict "t" .StartsAt "f" "15:04") }} → {{ template "noroshi.time" (dict "t" .EndsAt "f" "15:04 MST") }}
+
+{{ end -}}
+{{ template "noroshi.links" . }}
 {{- end }}

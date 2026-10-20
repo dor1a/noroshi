@@ -1,5 +1,5 @@
 GO_IMAGE ?= golang:1.26-alpine
-VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION  ?= $(shell git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)
 DOCKER_GO = docker run --rm \
 	-v noroshi-gomod:/go/pkg/mod -v noroshi-gocache:/root/.cache/go-build \
 	-v "$(CURDIR):/src" -w /src $(GO_IMAGE)

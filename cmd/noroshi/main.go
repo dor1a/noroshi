@@ -181,6 +181,22 @@ func serve() error {
 	}
 
 	m := metrics.New(version)
+	for _, p := range file.Pages {
+		// Private pages are only served on the admin listener.
+		base := env.BaseURL
+		if p.Private() {
+			base = env.AdminURL
+		}
+		url := ""
+		if base != "" {
+			url = base + "/p/" + p.Key
+		}
+		title := p.Title.Get(env.DefaultLocale)
+		if title == "" {
+			title = p.Key
+		}
+		m.PageInfo(p.Key, title, url)
+	}
 	pr := prober.New(st, m, log, prober.Settings{Locale: env.DefaultLocale})
 	a := auth.New(env, log)
 	srv, err := web.New(st, a, m, pr, env, log)

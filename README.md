@@ -178,9 +178,9 @@ flowchart LR
 | Prometheus rule | Turns a down check into an alert, skipping `alert="false"` | [deploy/prometheus/rules.yaml](deploy/prometheus/rules.yaml) |
 | Alertmanager route | Which channel gets it, usually by `page` or `component` | Your Alertmanager config |
 
-The example rules give `NoroshiCheckDown` three annotations: `name` (the component's display name), `target` (what the check probes), and `reason` (the latest failure, such as `HTTP 502` or `timeout`). They come from `noroshi_check_info` and `noroshi_check_failure_info` through `query`, so the alert still fires, with empty fields, when those series are missing. A reason that changes during an outage does not fire the alert again.
+The example rules give `NoroshiCheckDown` these annotations: `name` (the component's display name), `target` (what the check probes), `reason` (the latest failure, such as `HTTP 502` or `timeout`), and `page_title` and `page_url` (the page's title and address). They come from the `_info` series through `query`, so the alert still fires, with empty fields, when those series are missing. A reason that changes during an outage does not fire the alert again.
 
-[deploy/alertmanager/](deploy/alertmanager/) has example routes and a Discord template. It sends one message per page, uses the status page's symbols (× down, ○ up), shows when a check went down in each reader's time zone, and says how long it was down once it recovers. The example also routes one component to a separate channel.
+[deploy/alertmanager/](deploy/alertmanager/) has example routes and one template file for Discord and Microsoft Teams. It sends one message per page, marks checks 🔴 down and ✅ up, shows when a check went down, says how long it was down once it recovers, and links the page by its title. Discord shows the times in each reader's time zone; Teams uses the zone set at the top of the template, next to the status page and admin addresses. The example also routes one component to a separate channel.
 
 ## Kubernetes
 
@@ -215,6 +215,7 @@ The [chart README](charts/noroshi/README.md) covers the values. The chart has it
 
 | Name | Labels |
 | -- | -- |
+| `noroshi_page_info` | page, title, url |
 | `noroshi_check_up` | page, component, check, type, alert |
 | `noroshi_check_info` | page, component, check, name, target |
 | `noroshi_check_failure_info` | page, component, check, reason |
@@ -228,7 +229,7 @@ The [chart README](charts/noroshi/README.md) covers the values. The chart has it
 
 Only the leader reports check and component series. With several replicas, aggregate across instances in your alert rules.
 
-`noroshi_check_info` and `noroshi_check_failure_info` are always 1. The name follows `NOROSHI_DEFAULT_LOCALE`. A failure reason stays until the check is up again, so it is still there while a down check recovers.
+The `_info` series are always 1. Names and titles follow `NOROSHI_DEFAULT_LOCALE`. A failure reason stays until the check is up again, so it is still there while a down check recovers. `noroshi_page_info` comes from the config, so every instance reports it; its `url` is `NOROSHI_BASE_URL/p/<key>`, or `NOROSHI_ADMIN_URL/p/<key>` for a private page.
 
 ## Development
 

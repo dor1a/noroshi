@@ -44,3 +44,9 @@ receivers:
       - webhook_url_file: /etc/alertmanager/secrets/players_webhook
         title: '{{ template "noroshi.title" . }}'
         message: '{{ template "noroshi.message" . }}'
+  # The same messages for a Microsoft Teams channel (Workflows webhook).
+  - name: uptime-teams
+    msteamsv2_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/uptime_teams_webhook
+        title: '{{ template "noroshi.teams.title" . }}'
+        text: '{{ template "noroshi.teams.text" . }}'

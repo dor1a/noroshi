@@ -196,6 +196,7 @@ Alert rules depend on these names, so they do not change once set.
 
 | Name | Labels | Meaning |
 | -- | -- | -- |
+| `noroshi_page_info` | page, title, url | Always 1. Page title and address for alert messages; every instance reports it |
 | `noroshi_check_up` | page, component, check, type, alert | Last verdict (1 up, 0 down) |
 | `noroshi_check_info` | page, component, check, name, target | Always 1. Display name and what the check probes, for alert messages |
 | `noroshi_check_failure_info` | page, component, check, reason | Always 1. Latest failure, kept until the check is up again |
@@ -207,7 +208,7 @@ Alert rules depend on these names, so they do not change once set.
 | `noroshi_component_status` | page, component, status | 1 for the current status |
 | `noroshi_prober_leader` | | 1 when this instance is the leader |
 
-Example alert rules ship in the repo (`deploy/prometheus/rules.yaml`, also loaded by the chart's PrometheusRule), with example Alertmanager routes and a Discord template in `deploy/alertmanager/`.
+Example alert rules ship in the repo (`deploy/prometheus/rules.yaml`, also loaded by the chart's PrometheusRule), with example Alertmanager routes and a Discord and Microsoft Teams template in `deploy/alertmanager/`.
 
 ## Screens
 

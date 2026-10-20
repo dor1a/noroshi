@@ -62,6 +62,16 @@ func TestCheckInfoAndFailure(t *testing.T) {
 	}
 }
 
+func TestPageInfoSurvivesLosingTheLead(t *testing.T) {
+	m := New("test")
+	m.PageInfo("public", "Service Status", "https://status.example.com/p/public")
+	m.SetLeader(false)
+	want := `noroshi_page_info{page="public",title="Service Status",url="https://status.example.com/p/public"} 1`
+	if !strings.Contains(scrape(t, m), want) {
+		t.Errorf("missing %s", want)
+	}
+}
+
 func scrape(t *testing.T, m *Metrics) string {
 	t.Helper()
 	rec := httptest.NewRecorder()

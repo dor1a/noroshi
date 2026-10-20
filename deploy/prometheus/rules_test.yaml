@@ -12,6 +12,8 @@ tests:
         values: "1x5"
       - series: 'noroshi_check_failure_info{page="home",component="wiki",check="https",reason="HTTP 502"}'
         values: "1x5"
+      - series: 'noroshi_page_info{page="home",title="Service Status",url="https://status.example/p/home"}'
+        values: "1x5"
       - series: 'noroshi_check_up{page="home",component="plex",check="https",type="http",alert="false"}'
         values: "0x5"
       - series: 'noroshi_check_up{page="home",component="cdn",check="tls",type="tls",alert="true"}'
@@ -32,7 +34,10 @@ tests:
               name: Wiki
               target: https://wiki.example/
               reason: HTTP 502
-          # No info or failure series: the alert still fires, with empty fields.
+              page_title: Service Status
+              page_url: https://status.example/p/home
+          # No check info or failure series: the alert still fires, with
+          # empty fields. Page info comes from the page, so it is still there.
           - exp_labels:
               severity: critical
               page: home
@@ -45,3 +50,5 @@ tests:
               name: ""
               target: ""
               reason: ""
+              page_title: Service Status
+              page_url: https://status.example/p/home
