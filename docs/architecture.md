@@ -1,6 +1,6 @@
 # noroshi architecture
 
-noroshi puts health checks, a public status page, and incidents into one Go binary. It runs on a homelab (compose) first, and the same image moves to Kubernetes later. It builds no operator alerting of its own; the existing Prometheus and Alertmanager handle that.
+noroshi puts health checks, a public status page, and incidents into one Go binary. It runs on a homelab (compose) first, and the same image runs on Kubernetes through the Helm chart. It builds no operator alerting of its own; the existing Prometheus and Alertmanager handle that.
 
 ## Components
 
@@ -20,7 +20,7 @@ flowchart LR
   end
 
   pg[("Postgres<br/>results for 14 days,<br/>status history, incidents")]
-  targets["Check targets<br/>HTTP, TCP, TLS, RDAP"]
+  targets["Check targets<br/>HTTP, TCP, TLS, RDAP, Docker"]
   prom["Prometheus"]
   am["Alertmanager"]
   opsch["Operator channels"]
@@ -85,6 +85,6 @@ An update may pick any stage; the arrows show the usual order. Only Resolved clo
 | 1. Replace Kuma | Checks, judgement, component status, public page, uptime, `/metrics`, admin sign-in | Done |
 | 2. Incidents | Timeline (Investigating → Identified → Monitoring → Resolved), past records, manual status, Teams and Discord announcements | Done |
 | 3. Extensions | Scheduled maintenance, subscriptions (RSS, then mail), incident drafts from Alertmanager webhooks, static export, `push` checks | Not started |
-| 4. Kubernetes | Example manifests, ServiceMonitor, probes, verifying several replicas | Not started |
+| 4. Kubernetes | Helm chart with ServiceMonitor, PrometheusRule, routes, and probes; several replicas | Chart done and run on k3s; production trial pending |
 
 The rules behind each step are in [PLAN.md](PLAN.md).

@@ -1,6 +1,6 @@
 # noroshi plan
 
-> Status: phases 1 and 2 are implemented (2026-10-13, verified locally). Items marked `pending` were built with the draft values in this document.
+> Status: phases 1 and 2 are implemented (2026-10-13, verified locally). Phase 4 has a Helm chart, run on k3s with two replicas (2026-10-20); a trial on a production cluster is next. Items marked `pending` were built with the draft values in this document.
 > The thresholds (failures in a row, successes to recover, warning window) can be changed in YAML. Changing how statuses roll up or how uptime is counted means editing the code (`internal/judge`, `internal/uptime`) and its test tables.
 
 ## Summary
@@ -196,16 +196,18 @@ Alert rules depend on these names, so they do not change once set.
 
 | Name | Labels | Meaning |
 | -- | -- | -- |
-| `noroshi_check_up` | page, component, check, type | Last verdict (1 up, 0 down) |
+| `noroshi_check_up` | page, component, check, type, alert | Last verdict (1 up, 0 down) |
+| `noroshi_check_info` | page, component, check, name, target | Always 1. Display name and what the check probes, for alert messages |
+| `noroshi_check_failure_info` | page, component, check, reason | Always 1. Latest failure, kept until the check is up again |
 | `noroshi_check_duration_seconds` | page, component, check | Last response time |
 | `noroshi_check_last_run_timestamp_seconds` | page, component, check | Last run, to catch a stalled check |
 | `noroshi_check_interval_seconds` | page, component, check | Configured interval, used by the stall rule |
-| `noroshi_cert_expiry_timestamp_seconds` | page, component, check | Certificate expiry |
-| `noroshi_domain_expiry_timestamp_seconds` | page, component, check | Domain expiry |
+| `noroshi_cert_expiry_timestamp_seconds` | page, component, check, alert | Certificate expiry |
+| `noroshi_domain_expiry_timestamp_seconds` | page, component, check, alert | Domain expiry |
 | `noroshi_component_status` | page, component, status | 1 for the current status |
 | `noroshi_prober_leader` | | 1 when this instance is the leader |
 
-Example alert rules ship in the repo (`deploy/prometheus/rules.yaml`).
+Example alert rules ship in the repo (`deploy/prometheus/rules.yaml`, also loaded by the chart's PrometheusRule), with example Alertmanager routes and a Discord template in `deploy/alertmanager/`.
 
 ## Screens
 

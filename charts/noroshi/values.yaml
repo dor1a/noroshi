@@ -29,7 +29,7 @@ oidc:
   groupsClaim: groups
   scopes: openid profile email
 
-# Default language for visitors whose browser asks for neither en nor ko.
+# en or ko, used when neither ?lang=, a cookie, nor the browser picks one.
 # Also the language of component names in noroshi_check_info.
 locale: en
 theme: ""

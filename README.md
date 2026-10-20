@@ -17,7 +17,7 @@ The UI is in English with a full Korean translation.
 </div>
 
 > [!NOTE]
-> Pre-release. Phases 1, 2, and 4 of [the plan](docs/PLAN.md) are done: checks, the status page, incidents, and a Helm chart. The config format may still change before 1.0. See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
+> Pre-release. Phases 1 and 2 of [the plan](docs/PLAN.md) are done: checks, the status page, and incidents. Phase 4 has a Helm chart and waits for a trial on a production cluster. The config format may still change before 1.0. See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
 
 ## What it does
 
@@ -98,7 +98,7 @@ Everything that shapes a page, and the admin pages, lives in the config file:
 
 ```yaml
 admin:
-  title: Phomelo
+  title: Example
   logo: https://cdn.example.com/logo.png
   gravatar: true
 pages:
@@ -107,19 +107,20 @@ pages:
     logo: https://cdn.example.com/logo.png   # fetched once at startup; also the favicon
     visibility: private     # only on the admin listener, after sign-in
   - key: public
-    title: Phomelo
+    title: Example
     logo: logo.png          # a file works too, relative to the config file
     alert: false            # already covered by container alerts elsewhere
     groups:
       - key: game
         name: Game
         components:
-          - key: palworld
-            name: Palworld
+          - key: game-server
+            name: Game server
+            alert: true     # inner levels win, so this one pages again
             checks:
               - key: container
                 type: docker
-                container: 90-game-palworld-1
+                container: game-server
 ```
 
 | Field | Where | Effect |

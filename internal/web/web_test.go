@@ -93,13 +93,13 @@ func TestPublicTemplates(t *testing.T) {
 	out := render(t, s, "admin_pages", struct {
 		adminBase
 		Pages []pageItem
-	}{adminBase{Locale: "ko", DocTitle: "admin", Section: "pages", Brand: "Phomelo", Logo: "/admin/logo?v=1", UserName: "dev", Dev: true}, items})
+	}{adminBase{Locale: "ko", DocTitle: "admin", Section: "pages", Brand: "Example", Logo: "/admin/logo?v=1", UserName: "dev", Dev: true}, items})
 	if !strings.Contains(out, `href="/pages" aria-current="page"`) || !strings.Contains(out, `href="/p/home?lang=ko"`) || !strings.Contains(out, `class="colophon"`) {
 		t.Fatal("admin page list lacks the pages tab or the page link")
 	}
 	out = render(t, s, "signed_out", struct {
 		Locale, Theme, DocTitle, Brand, Logo, Favicon string
-	}{"ko", "", "x", "Phomelo", "/admin/logo?v=1", "/admin/logo?v=1"})
+	}{"ko", "", "x", "Example", "/admin/logo?v=1", "/admin/logo?v=1"})
 	if !strings.Contains(out, "로그아웃했습니다") || !strings.Contains(out, `href="/admin"`) {
 		t.Fatal("signed-out page lacks its message or the sign-in link")
 	}
@@ -132,7 +132,7 @@ func TestAdminTemplates(t *testing.T) {
 	if row.StateKey != "down" || row.ResultClass != "t-bad" || row.ExpiryClass != "t-warn" {
 		t.Fatalf("admin row: %+v", row)
 	}
-	base := adminBase{Locale: "ko", DocTitle: "admin", Section: "checks", Brand: "Phomelo", Logo: "/admin/logo?v=1", UserName: "dev", Dev: true, ProberKey: "leader", ProberText: "prober", ProberLine: "prober"}
+	base := adminBase{Locale: "ko", DocTitle: "admin", Section: "checks", Brand: "Example", Logo: "/admin/logo?v=1", UserName: "dev", Dev: true, ProberKey: "leader", ProberText: "prober", ProberLine: "prober"}
 	out := render(t, s, "admin", struct {
 		adminBase
 		Rows []adminRow
@@ -164,7 +164,7 @@ func TestAdminTemplates(t *testing.T) {
 	if a, b := gravatarURL(" Me@Example.com "), gravatarURL("me@example.com"); a != b || !strings.HasPrefix(a, "https://gravatar.com/avatar/") || len(a) != len("https://gravatar.com/avatar/?s=64&d=blank")+64 {
 		t.Fatalf("gravatar: %s %s", a, b)
 	}
-	for _, want := range []string{`src="/admin/logo?v=1"`, `<span class="title">Phomelo</span>`, `<span class="avatar" aria-hidden="true">D</span>`, `href="/admin" aria-current="page"`} {
+	for _, want := range []string{`src="/admin/logo?v=1"`, `<span class="title">Example</span>`, `<span class="avatar" aria-hidden="true">D</span>`, `href="/admin" aria-current="page"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("admin masthead lacks %s", want)
 		}

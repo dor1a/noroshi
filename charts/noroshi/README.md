@@ -12,8 +12,10 @@ kubectl create secret generic noroshi \
   --from-literal=oidc-client-secret='...' \
   --from-literal=session-key="$(openssl rand -hex 32)"
 
-helm install noroshi oci://ghcr.io/dor1a/charts/noroshi --version 0.1.0 -f values.yaml
+helm install noroshi oci://ghcr.io/dor1a/charts/noroshi --version <chart version> -f values.yaml
 ```
+
+`--version` takes a chart version, which is not the app version (see [Versions](#versions)).
 
 A minimal `values.yaml`:
 
@@ -42,7 +44,7 @@ config:
                   url: https://example.com/
 ```
 
-`config` is the noroshi config file as it is ([reference](https://github.com/dor1a/noroshi#config-file)). A change to it rolls the pods, because noroshi reads the file at startup.
+`config` holds the noroshi config file ([reference](https://github.com/dor1a/noroshi#config-file)). Helm writes it back out as YAML, so comments in it are dropped. A change to it rolls the pods, because noroshi reads the file at startup.
 
 ## Values
 
@@ -52,9 +54,11 @@ config:
 | `image.repository` | `ghcr.io/dor1a/noroshi` | |
 | `image.tag` | appVersion | |
 | `image.digest` | | `sha256:...`. Replaces the tag when set |
+| `image.pullPolicy`, `imagePullSecrets` | `IfNotPresent`, `[]` | |
+| `nameOverride`, `fullnameOverride` | | |
 | `baseURL`, `adminURL` | | Absolute URLs users reach. `adminURL` is the OIDC redirect base |
 | `oidc.*` | | `issuer`, `clientID`, `adminGroup` (`noroshi-admins`), `groupsClaim` (`groups`), `scopes` |
-| `locale` | `en` | Default UI language, and the language of names in metrics |
+| `locale` | `en` | `en` or `ko`, used when neither `?lang=`, a cookie, nor the browser picks one. Also the language of names in metrics |
 | `theme`, `logLevel` | | `NOROSHI_THEME`, `NOROSHI_LOG_LEVEL` |
 | `secret.name` | | Required. Existing Secret with the keys below |
 | `secret.env` | database URL, OIDC client secret, session key | Variable name to Secret key. Each becomes `NAME_FILE` pointing at the mounted key. Add webhook variables named by `url_env`; set one to `null` to drop it |
@@ -65,8 +69,13 @@ config:
 | `service.ops.port` | `8082` | `/healthz`, `/readyz`, `/metrics`. Keep it inside the cluster |
 | `httpRoute.public`, `httpRoute.admin` | off | Gateway API routes: `parentRefs`, `hostnames`, `annotations` |
 | `ingress.public`, `ingress.admin` | off | `className`, `hosts`, `tls`, `annotations` |
-| `serviceMonitor.enabled` | `false` | Scrapes the ops port. `labels` for your Prometheus selector |
+| `serviceMonitor.enabled` | `false` | Scrapes the ops port every `serviceMonitor.interval` (`30s`). `labels` for your Prometheus selector |
 | `prometheusRule.enabled` | `false` | The rules from `deploy/prometheus/rules.yaml`. `labels` for your rule selector |
+| `podDisruptionBudget` | on, `minAvailable: 1` | Only created when `replicaCount` is above 1 |
+| `livenessProbe`, `readinessProbe` | `/healthz`, `/readyz` on the ops port | `/readyz` fails while the database is unreachable |
+| `podSecurityContext`, `securityContext` | see below | |
+| `serviceAccount` | created, no token mounted | `create`, `name`, `annotations` |
+| `podAnnotations`, `podLabels` | `{}` | |
 | `resources`, `nodeSelector`, `tolerations`, `affinity`, `topologySpreadConstraints`, `priorityClassName` | | Usual pod settings |
 | `extraVolumes`, `extraVolumeMounts` | `[]` | For example a CA bundle with `SSL_CERT_FILE` in `extraEnv` |
 

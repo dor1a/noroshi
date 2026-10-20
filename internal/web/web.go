@@ -342,7 +342,7 @@ func favicon(v any) string {
 }
 
 // docTitle joins the parts of a browser tab title, the name first and then
-// what the tab shows: "Phomelo - Incidents".
+// what the tab shows: "Example - Incidents".
 func docTitle(parts ...string) string {
 	var keep []string
 	for _, p := range parts {
