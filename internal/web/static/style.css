@@ -235,7 +235,7 @@ time { font-variant-numeric: tabular-nums; }
 .mono, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 .sheet {
-  max-width: 760px; margin-inline: auto; display: flex; flex-direction: column; gap: 24px;
+  max-width: 960px; margin-inline: auto; display: flex; flex-direction: column; gap: 24px;
   min-height: calc(100vh - 28px - var(--foot-pad)); min-height: calc(100dvh - 28px - var(--foot-pad));
 }
 .sheet > .colophon { margin-top: auto; }
