@@ -3,6 +3,9 @@
   (group_by: alertname, page).
     Discord          title: noroshi.title        message: noroshi.message
     Microsoft Teams  title: noroshi.teams.title  text:    noroshi.teams.text
+    Outside readers  title: noroshi.title        message: noroshi.public.message
+  noroshi.public.message is for a Discord channel read outside the team, such
+  as a game server's players: no check names, targets, reasons or admin link.
   Set your addresses and time zone in the three templates below.
 */}}
 
@@ -11,6 +14,8 @@
 {{ define "noroshi.time" }}{{ (tz "UTC" .t).Format .f }}{{ end }}
 
 {{ define "noroshi.name" }}{{ or .Annotations.name .Labels.component }}{{ end }}
+{{/* Whole seconds: humanizeDuration prints fractions below a minute (55.97s). */}}
+{{ define "noroshi.downtime" }}{{ ((.EndsAt.Sub .StartsAt).Round 1000000000).Seconds | humanizeDuration }}{{ end }}
 
 {{ define "noroshi.title" -}}
 {{ if eq .Status "firing" -}}
@@ -22,21 +27,39 @@
 {{- end }}
 
 {{/* The page title and address come from noroshi_page_info; the key and status_url stand in without it. */}}
-{{ define "noroshi.links" }}{{ with index .Alerts 0 }}[{{ or .Annotations.page_title .Labels.page }}]({{ with .Annotations.page_url }}{{ . }}{{ else }}{{ template "noroshi.status_url" }}/p/{{ .Labels.page }}{{ end }}){{ end }} | [Admin]({{ template "noroshi.admin_url" }}){{ end }}
+{{ define "noroshi.page_url" }}{{ with .Annotations.page_url }}{{ . }}{{ else }}{{ template "noroshi.status_url" }}/p/{{ .Labels.page }}{{ end }}{{ end }}
+{{ define "noroshi.links" }}{{ with index .Alerts 0 }}[{{ or .Annotations.page_title .Labels.page }}]({{ template "noroshi.page_url" . }}){{ end }} | [Admin]({{ template "noroshi.admin_url" }}){{ end }}
 
-{{/* Discord shows <t:unix:…> in each reader's own time zone. */}}
+{{/*
+  A single alert is already named in the title, so its body starts at the check.
+  Discord shows <t:unix:…> in each reader's own time zone.
+*/}}
 {{ define "noroshi.message" -}}
+{{ if eq (len .Alerts) 1 -}}
+{{ with index .Alerts 0 -}}
+{{ if eq .Status "firing" -}}
+**{{ .Labels.check }}**{{ with .Annotations.reason }}: {{ . }}{{ end }}
+{{ with .Annotations.target }}{{ . }}
+{{ end }}Down since <t:{{ .StartsAt.Unix }}:f> (<t:{{ .StartsAt.Unix }}:R>)
+
+{{ else -}}
+**{{ .Labels.check }}**
+Down for {{ template "noroshi.downtime" . }}, <t:{{ .StartsAt.Unix }}:t> → <t:{{ .EndsAt.Unix }}:t>
+
+{{ end -}}
+{{ end -}}
+{{ else -}}
 {{ range .Alerts.Firing -}}
-🔴 **{{ template "noroshi.name" . }}** › {{ .Labels.check }}
-{{ with .Annotations.reason }}{{ . }}
-{{ end }}{{ with .Annotations.target }}{{ . }}
+🔴 **{{ template "noroshi.name" . }}** › {{ .Labels.check }}{{ with .Annotations.reason }}: {{ . }}{{ end }}
+{{ with .Annotations.target }}{{ . }}
 {{ end }}Down since <t:{{ .StartsAt.Unix }}:f> (<t:{{ .StartsAt.Unix }}:R>)
 
 {{ end -}}
 {{ range .Alerts.Resolved -}}
 ✅ **{{ template "noroshi.name" . }}** › {{ .Labels.check }}
-Down for {{ (.EndsAt.Sub .StartsAt).Seconds | humanizeDuration }}, <t:{{ .StartsAt.Unix }}:t> → <t:{{ .EndsAt.Unix }}:t>
+Down for {{ template "noroshi.downtime" . }}, <t:{{ .StartsAt.Unix }}:t> → <t:{{ .EndsAt.Unix }}:t>
 
+{{ end -}}
 {{ end -}}
 {{ template "noroshi.links" . }}
 {{- end }}
@@ -45,12 +68,27 @@ Down for {{ (.EndsAt.Sub .StartsAt).Seconds | humanizeDuration }}, <t:{{ .Starts
 {{ define "noroshi.teams.title" }}{{ template "noroshi.title" . }}{{ end }}
 
 {{ define "noroshi.teams.text" -}}
+{{ if eq (len .Alerts) 1 -}}
+{{ with index .Alerts 0 -}}
+{{ if eq .Status "firing" -}}
+**{{ .Labels.check }}**{{ with .Annotations.reason }}: {{ . }}{{ end }}
+
+{{ with .Annotations.target }}{{ . }}
+
+{{ end }}Down since {{ template "noroshi.time" (dict "t" .StartsAt "f" "2006-01-02 15:04 MST") }}
+
+{{ else -}}
+**{{ .Labels.check }}**
+
+Down for {{ template "noroshi.downtime" . }}, {{ template "noroshi.time" (dict "t" .StartsAt "f" "15:04") }} → {{ template "noroshi.time" (dict "t" .EndsAt "f" "15:04 MST") }}
+
+{{ end -}}
+{{ end -}}
+{{ else -}}
 {{ range .Alerts.Firing -}}
-🔴 **{{ template "noroshi.name" . }}** › {{ .Labels.check }}
+🔴 **{{ template "noroshi.name" . }}** › {{ .Labels.check }}{{ with .Annotations.reason }}: {{ . }}{{ end }}
 
-{{ with .Annotations.reason }}{{ . }}
-
-{{ end }}{{ with .Annotations.target }}{{ . }}
+{{ with .Annotations.target }}{{ . }}
 
 {{ end }}Down since {{ template "noroshi.time" (dict "t" .StartsAt "f" "2006-01-02 15:04 MST") }}
 
@@ -58,8 +96,29 @@ Down for {{ (.EndsAt.Sub .StartsAt).Seconds | humanizeDuration }}, <t:{{ .Starts
 {{ range .Alerts.Resolved -}}
 ✅ **{{ template "noroshi.name" . }}** › {{ .Labels.check }}
 
-Down for {{ (.EndsAt.Sub .StartsAt).Seconds | humanizeDuration }}, {{ template "noroshi.time" (dict "t" .StartsAt "f" "15:04") }} → {{ template "noroshi.time" (dict "t" .EndsAt "f" "15:04 MST") }}
+Down for {{ template "noroshi.downtime" . }}, {{ template "noroshi.time" (dict "t" .StartsAt "f" "15:04") }} → {{ template "noroshi.time" (dict "t" .EndsAt "f" "15:04 MST") }}
 
 {{ end -}}
+{{ end -}}
 {{ template "noroshi.links" . }}
+{{- end }}
+
+{{ define "noroshi.public.message" -}}
+{{ if eq (len .Alerts) 1 -}}
+{{ with index .Alerts 0 -}}
+{{ if eq .Status "firing" -}}
+Down since <t:{{ .StartsAt.Unix }}:f> (<t:{{ .StartsAt.Unix }}:R>)
+{{- else -}}
+Down for {{ template "noroshi.downtime" . }}, <t:{{ .StartsAt.Unix }}:t> → <t:{{ .EndsAt.Unix }}:t>
+{{- end }}
+{{ end -}}
+{{ else -}}
+{{ range .Alerts.Firing -}}
+🔴 **{{ template "noroshi.name" . }}** since <t:{{ .StartsAt.Unix }}:t> (<t:{{ .StartsAt.Unix }}:R>)
+{{ end -}}
+{{ range .Alerts.Resolved -}}
+✅ **{{ template "noroshi.name" . }}** back after {{ template "noroshi.downtime" . }}
+{{ end -}}
+{{ end }}
+{{ with index .Alerts 0 }}[Status page]({{ template "noroshi.page_url" . }}){{ end }}
 {{- end }}

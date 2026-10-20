@@ -82,9 +82,9 @@ An update may pick any stage; the arrows show the usual order. Only Resolved clo
 
 | Phase | Scope | State |
 | -- | -- | -- |
-| 1. Replace Kuma | Checks, judgement, component status, public page, uptime, `/metrics`, admin sign-in | Done |
+| 1. Checks and status page | Checks, judgement, component status, public page, uptime, `/metrics`, admin sign-in | Done |
 | 2. Incidents | Timeline (Investigating → Identified → Monitoring → Resolved), past records, manual status, Teams and Discord announcements | Done |
 | 3. Extensions | Scheduled maintenance, subscriptions (RSS, then mail), incident drafts from Alertmanager webhooks, static export, `push` checks | Not started |
-| 4. Kubernetes | Helm chart with ServiceMonitor, PrometheusRule, routes, and probes; several replicas | Chart done and run on k3s; production trial pending |
+| 4. Kubernetes | Helm chart with ServiceMonitor, PrometheusRule, routes, and probes; several replicas | Done |
 
 The rules behind each step are in [PLAN.md](PLAN.md).

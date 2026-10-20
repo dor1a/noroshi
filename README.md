@@ -6,7 +6,7 @@
 
 **Health checks, a public status page, and incident updates from one Go binary**
 
-Built to replace Uptime Kuma in a homelab first, then run unchanged on Kubernetes.<br>
+Runs as one container with docker compose, or on Kubernetes with its Helm chart.<br>
 The UI is in English with a full Korean translation.
 
 [![build](https://github.com/dor1a/noroshi/actions/workflows/build.yml/badge.svg)](https://github.com/dor1a/noroshi/actions/workflows/build.yml)
@@ -17,7 +17,7 @@ The UI is in English with a full Korean translation.
 </div>
 
 > [!NOTE]
-> Pre-release. Phases 1 and 2 of [the plan](docs/PLAN.md) are done: checks, the status page, and incidents. Phase 4 has a Helm chart and waits for a trial on a production cluster. The config format may still change before 1.0. See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
+> Phases 1, 2 and 4 of [the plan](docs/PLAN.md) are done: checks, the status page, incidents, and the Helm chart. The config format may still change before 1.0. See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
 
 ## What it does
 
@@ -180,7 +180,7 @@ flowchart LR
 
 The example rules give `NoroshiCheckDown` these annotations: `name` (the component's display name), `target` (what the check probes), `reason` (the latest failure, such as `HTTP 502` or `timeout`), and `page_title` and `page_url` (the page's title and address). They come from the `_info` series through `query`, so the alert still fires, with empty fields, when those series are missing. A reason that changes during an outage does not fire the alert again.
 
-[deploy/alertmanager/](deploy/alertmanager/) has example routes and one template file for Discord and Microsoft Teams. It sends one message per page, marks checks 🔴 down and ✅ up, shows when a check went down, says how long it was down once it recovers, and links the page by its title. Discord shows the times in each reader's time zone; Teams uses the zone set at the top of the template, next to the status page and admin addresses. The example also routes one component to a separate channel.
+[deploy/alertmanager/](deploy/alertmanager/) has example routes and one template file for Discord and Microsoft Teams. It sends one message per page, marks checks 🔴 down and ✅ up, shows when a check went down, says how long it was down once it recovers, and links the page by its title. A single check is named once, in the title. Discord shows the times in each reader's time zone; Teams uses the zone set at the top of the template, next to the status page and admin addresses. The example also routes one component to a channel its players read, with `noroshi.public.message`: names, times and the page link, but no check names, targets, failure reasons or admin link.
 
 ## Kubernetes
 

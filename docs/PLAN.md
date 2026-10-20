@@ -1,11 +1,11 @@
 # noroshi plan
 
-> Status: phases 1 and 2 are implemented (2026-10-13, verified locally). Phase 4 has a Helm chart, run on k3s with two replicas (2026-10-20); a trial on a production cluster is next. Items marked `pending` were built with the draft values in this document.
+> Status: phases 1, 2 and 4 are done. Phases 1 and 2 were verified locally (2026-10-13), and the Helm chart has run with two replicas on a k3s cluster in daily use since 2026-10-20 (v0.2.0). Items marked `pending` were built with the draft values in this document.
 > The thresholds (failures in a row, successes to recover, warning window) can be changed in YAML. Changing how statuses roll up or how uptime is counted means editing the code (`internal/judge`, `internal/uptime`) and its test tables.
 
 ## Summary
 
-noroshi is a self-made status page that puts health checks, a public status page, and incident records into one binary. The first goal is to replace Uptime Kuma.
+noroshi is a self-made status page that puts health checks, a public status page, and incident records into one binary.
 
 | Item | Detail |
 | -- | -- |
@@ -19,13 +19,13 @@ See [architecture.md](architecture.md) for the diagrams.
 
 ## Why
 
-Kuma handles checks and a public page, but its incident features are thin.
+A status page should carry incidents as well as checks.
 
-- An incident is a single banner. No timeline builds up (Investigating → Identified → Monitoring → Resolved)
-- Past incidents are not kept
-- The link between components and incidents is loose
-- Scheduled maintenance and subscriptions are not first-class
-- Settings live in the UI and SQLite, which makes them hard to manage with GitOps
+- An incident builds a timeline (Investigating → Identified → Monitoring → Resolved) rather than a single banner
+- Past incidents are kept
+- Incidents are tied to the components they affect
+- Scheduled maintenance and subscriptions are first-class
+- Settings live in YAML, so they can be managed with GitOps
 
 ## Design principles
 
@@ -133,7 +133,7 @@ pages:
 | `push` | Later | A signal an outside job sends on a schedule (cron watching) |
 | `dns` | Later | |
 | ICMP | No | Needs `NET_RAW` in the container, which the Kubernetes restricted policy blocks |
-| `docker` | Done (phase 2) | Container running and healthy, through a read-only socket proxy. Added to take over Kuma's container monitors; reverses the earlier "no container checks" |
+| `docker` | Done (phase 2) | Container running and healthy, through a read-only socket proxy. Added for the homelab's container monitors; reverses the earlier "no container checks" |
 
 ### Judgement rules (`pending`)
 
@@ -227,10 +227,10 @@ Example alert rules ship in the repo (`deploy/prometheus/rules.yaml`, also loade
 
 | Phase | Scope | Done when |
 | -- | -- | -- |
-| 1. Replace Kuma | Checks, judgement, component status, public page, uptime, `/metrics`, admin sign-in | The domain and expiry watching Kuma did in the homelab moves over, Prometheus alert rules are in place, and Kuma is shut down |
+| 1. Checks and status page | Checks, judgement, component status, public page, uptime, `/metrics`, admin sign-in | The homelab's checks, domain and certificate expiry included, run on noroshi with Prometheus alert rules in place |
 | 2. Incidents | Incident timeline, past records, manual status, Teams and Discord announcements | One real outage is announced through noroshi and recorded until it is resolved |
 | 3. Extensions | Scheduled maintenance, subscriptions (RSS, then mail), incident drafts from Alertmanager webhooks, static export, `push` checks | Decided item by item |
-| 4. Kubernetes | Helm chart with ServiceMonitor, PrometheusRule, Gateway API and Ingress routes, probes; several replicas verified on k3s | A trial run on a production cluster |
+| 4. Kubernetes | Helm chart with ServiceMonitor, PrometheusRule, Gateway API and Ingress routes, probes; several replicas verified on k3s | Running on a cluster in daily use |
 
 ## Out of scope
 

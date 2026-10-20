@@ -1,6 +1,7 @@
 // Light/dark toggle. Loaded in <head> without defer so a stored choice is
 // applied before the first paint. With no stored choice the page follows the
-// system setting.
+// system setting, and picking the mode the system is already in clears the
+// stored choice so the page follows it again.
 (function () {
   "use strict";
   var KEY = "noroshi-mode";
@@ -14,10 +15,11 @@
     if (mode === "light" || mode === "dark") root.setAttribute("data-mode", mode);
     else root.removeAttribute("data-mode");
   }
-  function current() {
-    var m = root.getAttribute("data-mode");
-    if (m) return m;
+  function system() {
     return media && media.matches ? "dark" : "light";
+  }
+  function current() {
+    return root.getAttribute("data-mode") || system();
   }
 
   apply(stored());
@@ -34,8 +36,12 @@
     }
     button.addEventListener("click", function () {
       var next = current() === "dark" ? "light" : "dark";
+      if (next === system()) next = null;
       apply(next);
-      try { localStorage.setItem(KEY, next); } catch (e) {}
+      try {
+        if (next) localStorage.setItem(KEY, next);
+        else localStorage.removeItem(KEY);
+      } catch (e) {}
       refresh();
     });
     if (media && media.addEventListener) media.addEventListener("change", refresh);

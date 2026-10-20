@@ -39,11 +39,12 @@ receivers:
       - webhook_url_file: /etc/alertmanager/secrets/uptime_webhook
         title: '{{ template "noroshi.title" . }}'
         message: '{{ template "noroshi.message" . }}'
+  # Players see only names, times and the page link.
   - name: players
     discord_configs:
       - webhook_url_file: /etc/alertmanager/secrets/players_webhook
         title: '{{ template "noroshi.title" . }}'
-        message: '{{ template "noroshi.message" . }}'
+        message: '{{ template "noroshi.public.message" . }}'
   # The same messages for a Microsoft Teams channel (Workflows webhook).
   - name: uptime-teams
     msteamsv2_configs:
