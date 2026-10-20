@@ -1,0 +1,72 @@
+# Every optional resource turned on, for lint and schema checks.
+replicaCount: 2
+
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+baseURL: https://status.example.com
+adminURL: https://status-admin.example.com
+
+oidc:
+  issuer: https://sso.example.com/realms/main
+  clientID: noroshi
+
+secret:
+  name: noroshi
+  env:
+    NOROSHI_DATABASE_URL: database-url
+    NOROSHI_OIDC_CLIENT_SECRET: oidc-client-secret
+    NOROSHI_SESSION_KEY: session-key
+    NOROSHI_WEBHOOK_TEAMS: webhook-teams
+
+nodeSelector:
+  node-role.kubernetes.io/app: "true"
+
+tolerations:
+  - key: node-role.kubernetes.io/app
+    operator: Exists
+    effect: NoSchedule
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kps
+
+prometheusRule:
+  enabled: true
+  labels:
+    release: kps
+
+httpRoute:
+  public:
+    enabled: true
+    parentRefs:
+      - name: default
+        namespace: kube-system
+        sectionName: https
+    hostnames:
+      - status.example.com
+  admin:
+    enabled: true
+    parentRefs:
+      - name: default
+        namespace: kube-system
+        sectionName: https
+    hostnames:
+      - status-admin.example.com
+
+ingress:
+  public:
+    enabled: true
+    className: nginx
+    hosts:
+      - status.example.com
+    tls:
+      - secretName: status-tls
+        hosts:
+          - status.example.com
+  admin:
+    enabled: true
+    className: nginx
+    hosts:
+      - status-admin.example.com

@@ -1,0 +1,14 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "noroshi.fullname" . }}
+  labels:
+    {{- include "noroshi.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- /* A copy of deploy/prometheus/rules.yaml, read raw so its {{ }} reach Prometheus. */}}
+  {{- .Files.Get "files/rules.yaml" | nindent 2 }}
+{{- end }}

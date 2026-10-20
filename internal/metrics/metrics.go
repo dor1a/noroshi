@@ -19,6 +19,8 @@ type Metrics struct {
 	reg *prometheus.Registry
 
 	checkUp       *prometheus.GaugeVec
+	checkInfo     *prometheus.GaugeVec
+	checkFailure  *prometheus.GaugeVec
 	checkDuration *prometheus.GaugeVec
 	checkLastRun  *prometheus.GaugeVec
 	checkInterval *prometheus.GaugeVec
@@ -28,10 +30,12 @@ type Metrics struct {
 	leader        prometheus.Gauge
 }
 
-// CheckLabels identifies a check in metrics.
+// CheckLabels identifies a check in metrics. Name and Target only go on
+// noroshi_check_info, so alert rules can show them without joining.
 type CheckLabels struct {
 	Page, Component, Check, Type string
 	Alert                        bool
+	Name, Target                 string
 }
 
 // New registers all collectors.
@@ -43,6 +47,14 @@ func New(version string) *Metrics {
 			Name: "noroshi_check_up",
 			Help: "Debounced check state: 1 up, 0 down. Absent while unknown. alert=\"false\" marks checks that should not page.",
 		}, []string{"page", "component", "check", "type", "alert"}),
+		checkInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "noroshi_check_info",
+			Help: "Always 1. Carries the component's display name and what the check probes.",
+		}, []string{"page", "component", "check", "name", "target"}),
+		checkFailure: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "noroshi_check_failure_info",
+			Help: "Always 1. Reason of the latest failed probe, kept until the check is up again.",
+		}, []string{"page", "component", "check", "reason"}),
 		checkDuration: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "noroshi_check_duration_seconds",
 			Help: "Duration of the last probe run.",
@@ -79,7 +91,7 @@ func New(version string) *Metrics {
 	build.WithLabelValues(version).Set(1)
 
 	reg.MustRegister(
-		m.checkUp, m.checkDuration, m.checkLastRun, m.checkInterval,
+		m.checkUp, m.checkInfo, m.checkFailure, m.checkDuration, m.checkLastRun, m.checkInterval,
 		m.certExpiry, m.domainExpiry, m.component, m.leader, build,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -101,7 +113,7 @@ func (m *Metrics) SetLeader(on bool) {
 	}
 	m.leader.Set(0)
 	for _, v := range []*prometheus.GaugeVec{
-		m.checkUp, m.checkDuration, m.checkLastRun, m.checkInterval,
+		m.checkUp, m.checkInfo, m.checkFailure, m.checkDuration, m.checkLastRun, m.checkInterval,
 		m.certExpiry, m.domainExpiry, m.component,
 	} {
 		v.Reset()
@@ -120,6 +132,7 @@ func (m *Metrics) CheckRun(l CheckLabels, state judge.CheckState, at time.Time, 
 	default:
 		m.checkUp.DeleteLabelValues(l.Page, l.Component, l.Check, l.Type, alert)
 	}
+	m.checkInfo.WithLabelValues(l.Page, l.Component, l.Check, l.Name, l.Target).Set(1)
 	m.checkDuration.WithLabelValues(short...).Set(dur.Seconds())
 	m.checkLastRun.WithLabelValues(short...).Set(float64(at.Unix()))
 	m.checkInterval.WithLabelValues(short...).Set(interval.Seconds())
@@ -128,6 +141,15 @@ func (m *Metrics) CheckRun(l CheckLabels, state judge.CheckState, at time.Time, 
 	}
 	if domain != nil {
 		m.domainExpiry.WithLabelValues(l.Page, l.Component, l.Check, alert).Set(float64(domain.Unix()))
+	}
+}
+
+// CheckFailure replaces the failure reason of a check. An empty reason
+// removes it.
+func (m *Metrics) CheckFailure(l CheckLabels, reason string) {
+	m.checkFailure.DeletePartialMatch(prometheus.Labels{"page": l.Page, "component": l.Component, "check": l.Check})
+	if reason != "" {
+		m.checkFailure.WithLabelValues(l.Page, l.Component, l.Check, reason).Set(1)
 	}
 }
 

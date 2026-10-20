@@ -43,3 +43,20 @@ e2e-down:
 
 rules-check:
 	docker run --rm --entrypoint promtool -v "$(CURDIR)/deploy/prometheus:/rules:ro" prom/prometheus:v3.5.0 check rules /rules/rules.yaml
+	docker run --rm --entrypoint promtool -v "$(CURDIR)/deploy/prometheus:/rules:ro" -w /rules prom/prometheus:v3.5.0 test rules rules_test.yaml
+
+HELM_IMAGE        ?= alpine/helm:4.3.1
+KUBECONFORM_IMAGE ?= ghcr.io/yannh/kubeconform:v0.8.0
+HELM        = docker run --rm -v "$(CURDIR)/charts:/charts:ro" $(HELM_IMAGE)
+KUBECONFORM = docker run --rm -i $(KUBECONFORM_IMAGE) -strict -summary \
+	-schema-location default \
+	-schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+
+.PHONY: chart-check
+
+# The chart carries a copy of the rules; they must not drift apart.
+chart-check:
+	cmp deploy/prometheus/rules.yaml charts/noroshi/files/rules.yaml
+	$(HELM) lint --strict /charts/noroshi -f /charts/noroshi/ci/full-values.yaml
+	$(HELM) template t /charts/noroshi --set secret.name=noroshi | $(KUBECONFORM) -
+	$(HELM) template t /charts/noroshi -f /charts/noroshi/ci/full-values.yaml | $(KUBECONFORM) -

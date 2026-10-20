@@ -1,0 +1,181 @@
+# noroshi needs PostgreSQL and, unless NOROSHI_DEV_NO_AUTH is set, an OIDC
+# provider. Settings that differ per install are below; pages, components,
+# and checks go in `config`.
+
+# Several replicas can share one database: a Postgres advisory lock picks
+# the one that runs the checks.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/dor1a/noroshi
+  # Defaults to the chart's appVersion.
+  tag: ""
+  # sha256:... pins the image; it replaces the tag when set.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Absolute URLs of the status page and the admin pages, as users reach them.
+baseURL: ""
+adminURL: ""
+
+oidc:
+  issuer: ""
+  clientID: ""
+  adminGroup: noroshi-admins
+  groupsClaim: groups
+  scopes: openid profile email
+
+# Default language for visitors whose browser asks for neither en nor ko.
+# Also the language of component names in noroshi_check_info.
+locale: en
+theme: ""
+logLevel: info
+
+# Secrets are read from files (NAME_FILE). Name an existing Secret and map
+# each variable to a key in it; webhook variables named by notifiers'
+# url_env go here too. Helm merges maps, so set a variable to null to drop it
+# (the OIDC and session entries are not needed with NOROSHI_DEV_NO_AUTH).
+secret:
+  name: ""
+  env:
+    NOROSHI_DATABASE_URL: database-url
+    NOROSHI_OIDC_CLIENT_SECRET: oidc-client-secret
+    NOROSHI_SESSION_KEY: session-key
+
+extraEnv: []
+
+# The noroshi config file: pages, components, and checks.
+# https://github.com/dor1a/noroshi/blob/main/deploy/config.example.yaml
+config:
+  pages:
+    - key: home
+      title: Service Status
+      groups:
+        - key: web
+          name: Web
+          components:
+            - key: website
+              name: Website
+              checks:
+                - key: https
+                  type: http
+                  url: https://example.com/
+
+# A ConfigMap with a config.yaml key, used instead of `config`.
+existingConfigMap: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Three listeners: public (status pages), admin (sign-in and incidents), and
+# ops (/healthz, /readyz, /metrics). Expose public and admin; keep ops inside
+# the cluster.
+service:
+  public:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+  admin:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+  ops:
+    port: 8082
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: ops
+  periodSeconds: 10
+  timeoutSeconds: 3
+
+# /readyz fails while the database is unreachable.
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: ops
+  periodSeconds: 5
+  timeoutSeconds: 3
+
+# Created only when replicaCount is above 1.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""
+
+extraVolumes: []
+extraVolumeMounts: []
+
+# Needs the Prometheus Operator CRDs.
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: 30s
+
+# The rules from deploy/prometheus/rules.yaml. Needs the Prometheus Operator CRDs.
+prometheusRule:
+  enabled: false
+  labels: {}
+
+# Gateway API routes. parentRefs names your Gateway and listener.
+httpRoute:
+  public:
+    enabled: false
+    annotations: {}
+    parentRefs: []
+    hostnames: []
+  admin:
+    enabled: false
+    annotations: {}
+    parentRefs: []
+    hostnames: []
+
+ingress:
+  public:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+  admin:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []

@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "noroshi.fullname" . }}
+  labels:
+    {{- include "noroshi.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "noroshi.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- if not .Values.existingConfigMap }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "noroshi.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "noroshi.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: noroshi
+          image: {{ include "noroshi.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: public
+              containerPort: 8080
+            - name: admin
+              containerPort: 8081
+            - name: ops
+              containerPort: 8082
+          env:
+            - name: NOROSHI_CONFIG
+              value: /etc/noroshi/config.yaml
+            {{- range $name, $value := dict
+                  "NOROSHI_BASE_URL" .Values.baseURL
+                  "NOROSHI_ADMIN_URL" .Values.adminURL
+                  "NOROSHI_OIDC_ISSUER" .Values.oidc.issuer
+                  "NOROSHI_OIDC_CLIENT_ID" .Values.oidc.clientID
+                  "NOROSHI_OIDC_ADMIN_GROUP" .Values.oidc.adminGroup
+                  "NOROSHI_OIDC_GROUPS_CLAIM" .Values.oidc.groupsClaim
+                  "NOROSHI_OIDC_SCOPES" .Values.oidc.scopes
+                  "NOROSHI_DEFAULT_LOCALE" .Values.locale
+                  "NOROSHI_THEME" .Values.theme
+                  "NOROSHI_LOG_LEVEL" .Values.logLevel }}
+            {{- if $value }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- range $name, $key := .Values.secret.env }}
+            - name: {{ $name }}_FILE
+              value: /run/secrets/noroshi/{{ $key }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/noroshi
+              readOnly: true
+            - name: secrets
+              mountPath: /run/secrets/noroshi
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "noroshi.configMapName" . }}
+        - name: secrets
+          secret:
+            secretName: {{ required "secret.name must name a Secret holding the database URL and other secrets" .Values.secret.name }}
+            defaultMode: 288 # 0440, readable through fsGroup
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,24 @@
+{{- range $listener := list "public" "admin" "ops" }}
+{{- $svc := index $.Values.service $listener }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "noroshi.serviceName" (list $ $listener) }}
+  labels:
+    {{- include "noroshi.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $listener }}
+  {{- with $svc.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $svc.type | default "ClusterIP" }}
+  selector:
+    {{- include "noroshi.selectorLabels" $ | nindent 4 }}
+  ports:
+    - name: {{ $listener }}
+      port: {{ $svc.port }}
+      targetPort: {{ $listener }}
+      protocol: TCP
+{{- end }}

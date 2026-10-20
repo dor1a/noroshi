@@ -1,12 +1,18 @@
 groups:
   - name: noroshi
     rules:
+      # name, target, and reason are read with query rather than joined into
+      # the expression: a missing info series then leaves them empty instead
+      # of dropping the alert, and a changing reason does not re-fire it.
       - alert: NoroshiCheckDown
         expr: noroshi_check_up{alert!="false"} == 0
         labels:
           severity: critical
         annotations:
           summary: "{{ $labels.page }}/{{ $labels.component }}: check {{ $labels.check }} is down"
+          name: '{{ with printf "noroshi_check_info{page=%q,component=%q,check=%q}" $labels.page $labels.component $labels.check | query }}{{ . | first | label "name" }}{{ end }}'
+          target: '{{ with printf "noroshi_check_info{page=%q,component=%q,check=%q}" $labels.page $labels.component $labels.check | query }}{{ . | first | label "target" }}{{ end }}'
+          reason: '{{ with printf "noroshi_check_failure_info{page=%q,component=%q,check=%q}" $labels.page $labels.component $labels.check | query }}{{ . | first | label "reason" }}{{ end }}'
 
       - alert: NoroshiCheckStalled
         expr: time() - noroshi_check_last_run_timestamp_seconds > 3 * noroshi_check_interval_seconds

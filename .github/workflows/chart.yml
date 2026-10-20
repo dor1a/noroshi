@@ -1,0 +1,55 @@
+name: chart
+
+# Every push checks the chart. A chart-X.Y.Z tag publishes it to
+# oci://ghcr.io/<owner>/charts/noroshi; the tag must match Chart.yaml.
+on:
+  push:
+    branches:
+      - main
+      - dev
+    tags:
+      - "chart-*"
+  pull_request:
+    branches:
+      - main
+      - dev
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: make chart-check
+
+  publish:
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/chart-')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.1
+
+      - name: Check the tag against Chart.yaml
+        run: |
+          want="${GITHUB_REF_NAME#chart-}"
+          have=$(sed -n 's/^version: //p' charts/noroshi/Chart.yaml)
+          if [ "$want" != "$have" ]; then
+            echo "tag says $want, Chart.yaml says $have"
+            exit 1
+          fi
+
+      - name: Publish
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "$TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          helm package charts/noroshi --destination dist
+          helm push dist/noroshi-*.tgz "oci://ghcr.io/$OWNER/charts"

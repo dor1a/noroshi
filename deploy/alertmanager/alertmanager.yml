@@ -1,0 +1,46 @@
+# Example routes for noroshi alerts. Merge the routes and receivers into your
+# own Alertmanager config; the webhook files hold Discord webhook URLs.
+templates:
+  - /etc/alertmanager/templates/*.tmpl
+
+route:
+  receiver: ops
+  routes:
+    # Send one component somewhere else, for example a channel its users read.
+    # The first matching route wins, so keep specific routes above general ones.
+    - matchers:
+        - alertname="NoroshiCheckDown"
+        - page="public"
+        - component="game-server"
+      receiver: players
+      group_by:
+        - alertname
+        - page
+      group_wait: 10s
+      group_interval: 1m
+    # Every other check: one message per page. A short group_interval keeps
+    # later failures and recoveries in the same page from waiting 5 minutes.
+    - matchers:
+        - alertname="NoroshiCheckDown"
+      receiver: uptime
+      group_by:
+        - alertname
+        - page
+      group_wait: 10s
+      group_interval: 1m
+
+receivers:
+  # noroshi's own health (NoroshiNoProberLeader, NoroshiCheckStalled, ...).
+  - name: ops
+    discord_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/ops_webhook
+  - name: uptime
+    discord_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/uptime_webhook
+        title: '{{ template "noroshi.title" . }}'
+        message: '{{ template "noroshi.message" . }}'
+  - name: players
+    discord_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/players_webhook
+        title: '{{ template "noroshi.title" . }}'
+        message: '{{ template "noroshi.message" . }}'

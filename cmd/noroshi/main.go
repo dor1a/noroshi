@@ -181,7 +181,7 @@ func serve() error {
 	}
 
 	m := metrics.New(version)
-	pr := prober.New(st, m, log, prober.Settings{})
+	pr := prober.New(st, m, log, prober.Settings{Locale: env.DefaultLocale})
 	a := auth.New(env, log)
 	srv, err := web.New(st, a, m, pr, env, log)
 	if err != nil {

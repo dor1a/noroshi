@@ -1,0 +1,47 @@
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'noroshi_check_up{page="home",component="wiki",check="https",type="http",alert="true"}'
+        values: "0x5"
+      - series: 'noroshi_check_info{page="home",component="wiki",check="https",name="Wiki",target="https://wiki.example/"}'
+        values: "1x5"
+      - series: 'noroshi_check_failure_info{page="home",component="wiki",check="https",reason="HTTP 502"}'
+        values: "1x5"
+      - series: 'noroshi_check_up{page="home",component="plex",check="https",type="http",alert="false"}'
+        values: "0x5"
+      - series: 'noroshi_check_up{page="home",component="cdn",check="tls",type="tls",alert="true"}'
+        values: "0x5"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: NoroshiCheckDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              page: home
+              component: wiki
+              check: https
+              type: http
+              alert: "true"
+            exp_annotations:
+              summary: "home/wiki: check https is down"
+              name: Wiki
+              target: https://wiki.example/
+              reason: HTTP 502
+          # No info or failure series: the alert still fires, with empty fields.
+          - exp_labels:
+              severity: critical
+              page: home
+              component: cdn
+              check: tls
+              type: tls
+              alert: "true"
+            exp_annotations:
+              summary: "home/cdn: check tls is down"
+              name: ""
+              target: ""
+              reason: ""

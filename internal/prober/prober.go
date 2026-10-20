@@ -26,6 +26,7 @@ type Settings struct {
 	Heartbeat     time.Duration // how often the leader checks its lock connection and touches its session
 	Retention     time.Duration // how long raw results are kept
 	PruneInterval time.Duration
+	Locale        string // language of the component names in metrics
 }
 
 // Prober is safe to start once.
@@ -317,16 +318,36 @@ func (p *Prober) runOnce(ctx context.Context, ls *leaderState, cr *checkRun) {
 		p.log.Info("component status changed", "page", ref.PageKey, "component", ref.Key, "status", status)
 	}
 
-	p.metrics.CheckRun(metrics.CheckLabels{
+	name := cr.row.ComponentName.Get(p.settings.Locale)
+	if name == "" {
+		name = cr.row.ComponentKey
+	}
+	labels := metrics.CheckLabels{
 		Page: cr.row.PageKey, Component: cr.row.ComponentKey, Check: cr.row.Key, Type: cr.row.Type,
-		Alert: spec.AlertEnabled(),
-	}, next.State.State, at, out.Latency, spec.Interval.Duration, next.CertExpiry, next.DomainExpiry)
+		Alert: spec.AlertEnabled(), Name: name, Target: spec.Target(),
+	}
+	p.metrics.CheckRun(labels, next.State.State, at, out.Latency, spec.Interval.Duration, next.CertExpiry, next.DomainExpiry)
+	// Keep the latest failure until the check is up again, so an alert that
+	// is still firing during recovery keeps its reason.
+	switch {
+	case !out.OK && !out.Skip:
+		p.metrics.CheckFailure(labels, or(out.Detail, "failed"))
+	case out.OK && next.State.State == judge.Up:
+		p.metrics.CheckFailure(labels, "")
+	}
 	p.metrics.ComponentStatus(ref.PageKey, ref.Key, status)
 
 	if next.State.State != prev.State.State {
 		p.log.Info("check state changed", "page", cr.row.PageKey, "component", cr.row.ComponentKey,
 			"check", cr.row.Key, "from", prev.State.State, "to", next.State.State, "detail", out.Detail)
 	}
+}
+
+func or(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
 }
 
 // componentStatus must be called with ls.mu held or before checks start.

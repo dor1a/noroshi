@@ -23,12 +23,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test ./...
       - run: go run ./cmd/noroshi validate deploy/config.example.yaml
+      - run: make rules-check
 
   # The Dockerfile cross-compiles from $BUILDPLATFORM, so arm64 needs no QEMU.
   image:

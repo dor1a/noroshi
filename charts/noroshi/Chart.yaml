@@ -1,0 +1,21 @@
+apiVersion: v2
+name: noroshi
+description: A status page with built-in health checks and incident timelines
+type: application
+# The chart is versioned on its own (chart-X.Y.Z tags); appVersion is the image it installs by default.
+version: 0.1.0-rc.1
+appVersion: "0.2.0-rc.1"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/dor1a/noroshi
+icon: https://raw.githubusercontent.com/dor1a/noroshi/main/internal/web/static/favicon.svg
+sources:
+  - https://github.com/dor1a/noroshi
+keywords:
+  - status-page
+  - uptime
+  - incidents
+maintainers:
+  - name: dor1a
+    url: https://github.com/dor1a
+annotations:
+  artifacthub.io/license: MIT

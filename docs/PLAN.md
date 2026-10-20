@@ -10,7 +10,7 @@ noroshi is a self-made status page that puts health checks, a public status page
 | Item | Detail |
 | -- | -- |
 | First environment | Homelab (docker compose, single host) |
-| Second environment | Air-gapped Kubernetes managed with GitOps (an internal page for a whole organisation) |
+| Second environment | Kubernetes, installed with the Helm chart (an internal page for a whole organisation) |
 | Shape | One Go binary, one image, Postgres |
 | UI | HTMX with server rendering, English by default with Korean |
 | License | MIT |
@@ -33,7 +33,7 @@ Kuma handles checks and a public page, but its incident features are thin.
 2. **Run checks, but build no operator alerting.** Results go out on `/metrics`; the existing Prometheus and Alertmanager handle alerts.
 3. **Structure is code, records are data.** Pages, components, and checks are defined in YAML (Git). Only incidents and check results accumulate in the database.
 4. **The public page is read-only and separate from admin functions.** Each gets its own listener.
-5. **Keep dependencies small.** Mostly the standard library. Static files (HTMX, CSS) are embedded in the binary. No CDN, because the second environment is air-gapped.
+5. **Keep dependencies small.** Mostly the standard library. Static files (HTMX, CSS) are embedded in the binary. No CDN: a status page should not stop rendering because someone else's CDN is down.
 
 ## Layout
 
@@ -227,7 +227,7 @@ Example alert rules ship in the repo (`deploy/prometheus/rules.yaml`).
 | 1. Replace Kuma | Checks, judgement, component status, public page, uptime, `/metrics`, admin sign-in | The domain and expiry watching Kuma did in the homelab moves over, Prometheus alert rules are in place, and Kuma is shut down |
 | 2. Incidents | Incident timeline, past records, manual status, Teams and Discord announcements | One real outage is announced through noroshi and recorded until it is resolved |
 | 3. Extensions | Scheduled maintenance, subscriptions (RSS, then mail), incident drafts from Alertmanager webhooks, static export, `push` checks | Decided item by item |
-| 4. Kubernetes | Example manifests, ServiceMonitor, probes, verifying several replicas | A trial run on a production cluster |
+| 4. Kubernetes | Helm chart with ServiceMonitor, PrometheusRule, Gateway API and Ingress routes, probes; several replicas verified on k3s | A trial run on a production cluster |
 
 ## Out of scope
 

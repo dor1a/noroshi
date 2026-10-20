@@ -29,3 +29,43 @@ func TestAlertLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckInfoAndFailure(t *testing.T) {
+	m := New("test")
+	l := CheckLabels{Page: "p", Component: "wiki", Check: "https", Type: "http", Alert: true,
+		Name: "Wiki", Target: "https://wiki.example/"}
+	m.CheckRun(l, judge.Down, time.Now(), time.Second, time.Minute, nil, nil)
+	m.CheckFailure(l, "timeout")
+	m.CheckFailure(l, "HTTP 502")
+
+	body := scrape(t, m)
+	for _, want := range []string{
+		`noroshi_check_info{check="https",component="wiki",name="Wiki",page="p",target="https://wiki.example/"} 1`,
+		`noroshi_check_failure_info{check="https",component="wiki",page="p",reason="HTTP 502"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if strings.Contains(body, `reason="timeout"`) {
+		t.Error("an older failure reason was kept")
+	}
+
+	m.CheckFailure(l, "")
+	if strings.Contains(scrape(t, m), "noroshi_check_failure_info{") {
+		t.Error("failure reason was not cleared")
+	}
+
+	m.SetLeader(false)
+	if strings.Contains(scrape(t, m), "noroshi_check_info{") {
+		t.Error("check info survived losing the lead")
+	}
+}
+
+func scrape(t *testing.T, m *Metrics) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body, _ := io.ReadAll(rec.Body)
+	return string(body)
+}

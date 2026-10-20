@@ -1,0 +1,33 @@
+{{/*
+  Discord messages for NoroshiCheckDown, one per status page (group_by alertname, page).
+  The symbols match the status page: × down, ○ up. Set your admin address below.
+*/}}
+
+{{ define "noroshi.admin_url" }}https://status-admin.example.com/admin{{ end }}
+
+{{ define "noroshi.name" }}{{ or .Annotations.name .Labels.component }}{{ end }}
+
+{{ define "noroshi.title" -}}
+{{ if eq .Status "firing" -}}
+× {{ if eq (len .Alerts.Firing) 1 }}{{ template "noroshi.name" (index .Alerts.Firing 0) }} is down{{ else }}{{ len .Alerts.Firing }} checks are down{{ end }}
+{{- with .Alerts.Resolved }}, {{ len . }} back up{{ end }}
+{{- else -}}
+○ {{ if eq (len .Alerts.Resolved) 1 }}{{ template "noroshi.name" (index .Alerts.Resolved 0) }} is back up{{ else }}{{ len .Alerts.Resolved }} checks are back up{{ end }}
+{{- end }}
+{{- end }}
+
+{{ define "noroshi.message" -}}
+{{ range .Alerts.Firing -}}
+**× {{ template "noroshi.name" . }}** › {{ .Labels.check }}
+{{ with .Annotations.reason }}{{ . }}
+{{ end }}{{ with .Annotations.target }}{{ . }}
+{{ end }}Down since <t:{{ .StartsAt.Unix }}:f> (<t:{{ .StartsAt.Unix }}:R>)
+
+{{ end -}}
+{{ range .Alerts.Resolved -}}
+**○ {{ template "noroshi.name" . }}** › {{ .Labels.check }}
+Down for {{ (.EndsAt.Sub .StartsAt).Seconds | humanizeDuration }}, <t:{{ .StartsAt.Unix }}:t> → <t:{{ .EndsAt.Unix }}:t>
+
+{{ end -}}
+Page `{{ .CommonLabels.page }}` | [Admin]({{ template "noroshi.admin_url" }})
+{{- end }}

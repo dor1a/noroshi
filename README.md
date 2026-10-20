@@ -17,14 +17,14 @@ The UI is in English with a full Korean translation.
 </div>
 
 > [!NOTE]
-> Pre-release. Phases 1 and 2 of [the plan](docs/PLAN.md) are done: checks, the status page, and incidents. The config format may still change before 1.0. See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
+> Pre-release. Phases 1, 2, and 4 of [the plan](docs/PLAN.md) are done: checks, the status page, incidents, and a Helm chart. The config format may still change before 1.0. See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
 
 ## What it does
 
-- Runs `http`, `tcp`, `tls`, and `domain_expiry` (RDAP) checks defined in a YAML file.
+- Runs `http`, `tcp`, `tls`, `domain_expiry` (RDAP), and `docker` checks defined in a YAML file.
 - Debounces results: by default a check goes down after 3 failures in a row and comes back after 2 successes in a row.
 - Rolls check states up into a component status and shows 90 days of daily uptime bars.
-- Exports Prometheus metrics. noroshi sends no alerts itself; point Alertmanager at the metrics instead ([example rules](deploy/prometheus/rules.yaml)).
+- Exports Prometheus metrics. noroshi sends no check alerts itself; Prometheus and Alertmanager do (see [Alerting](#alerting)).
 - Puts the admin pages behind any OIDC provider. Admin rights come from a group in the ID token.
 - Lets admins write incidents with a timeline (investigating, identified, monitoring, resolved). A status set on a component in an open incident replaces what its checks say and counts toward uptime. Each update can be announced to Discord or Microsoft Teams.
 - Lets several replicas share one database. A Postgres advisory lock picks the one instance that runs checks, and another takes over within about 10 seconds if it stops.
@@ -36,7 +36,7 @@ docker build -t noroshi:dev .
 docker run --rm -i noroshi:dev validate /dev/stdin < deploy/config.example.yaml
 ```
 
-To run it, you need Postgres and a config file. [deploy/compose/compose.yaml](deploy/compose/compose.yaml) shows a full setup with secrets read from files.
+To run it, you need Postgres and a config file. [deploy/compose/compose.yaml](deploy/compose/compose.yaml) shows a full setup with secrets read from files. On Kubernetes, use the [Helm chart](#kubernetes).
 
 For a local trial without an identity provider, set `NOROSHI_DEV_NO_AUTH=1`. The admin pages are then open to anyone who can reach the admin port, so never set it on a shared network.
 
@@ -154,6 +154,47 @@ pages:
 
 Delivery is retried on network errors, 429, and 5xx, three tries in all, and each result shows on the incident's admin page. Requests follow `HTTPS_PROXY`. Set `NOROSHI_BASE_URL` so messages link to the incident.
 
+Announcements are optional. Without `notifiers`, incidents only show on the pages.
+
+## Alerting
+
+Check alerts and incident announcements take different paths. noroshi only reports check states; Prometheus decides what is an alert and Alertmanager decides where it goes.
+
+```mermaid
+flowchart LR
+  cfg["config.yaml<br/>alert: true / false"] --> noroshi
+  noroshi -- "/metrics" --> prom["Prometheus<br/>alert rules"]
+  prom --> am["Alertmanager<br/>routes"]
+  am --> ops["operators' channel"]
+  am --> other["a channel for one page<br/>or component"]
+  admin["incident written<br/>on the admin pages"] --> noroshi
+  noroshi -- "notifiers" --> chat["Discord / Teams"]
+```
+
+| Step | Decides | Where |
+| -- | -- | -- |
+| `alert` in the config | Whether a check may page anyone, not where to | Page, group, component, or check; inner levels win |
+| Prometheus rule | Turns a down check into an alert, skipping `alert="false"` | [deploy/prometheus/rules.yaml](deploy/prometheus/rules.yaml) |
+| Alertmanager route | Which channel gets it, usually by `page` or `component` | Your Alertmanager config |
+
+The example rules give `NoroshiCheckDown` three annotations: `name` (the component's display name), `target` (what the check probes), and `reason` (the latest failure, such as `HTTP 502` or `timeout`). They come from `noroshi_check_info` and `noroshi_check_failure_info` through `query`, so the alert still fires, with empty fields, when those series are missing. A reason that changes during an outage does not fire the alert again.
+
+[deploy/alertmanager/](deploy/alertmanager/) has example routes and a Discord template. It sends one message per page, uses the status page's symbols (× down, ○ up), shows when a check went down in each reader's time zone, and says how long it was down once it recovers. The example also routes one component to a separate channel.
+
+## Kubernetes
+
+The Helm chart lives in [charts/noroshi](charts/noroshi) and is published to GHCR as an OCI chart.
+
+```sh
+kubectl create secret generic noroshi \
+  --from-literal=database-url='postgres://noroshi:...@postgres:5432/noroshi' \
+  --from-literal=oidc-client-secret='...' \
+  --from-literal=session-key="$(openssl rand -hex 32)"
+helm install noroshi oci://ghcr.io/dor1a/charts/noroshi --set secret.name=noroshi -f values.yaml
+```
+
+The [chart README](charts/noroshi/README.md) covers the values. The chart has its own version: a `chart-X.Y.Z` tag publishes chart X.Y.Z, and its `appVersion` is the image it installs unless you set one.
+
 ## Endpoints
 
 | Listener | Path | Purpose |
@@ -174,6 +215,8 @@ Delivery is retried on network errors, 429, and 5xx, three tries in all, and eac
 | Name | Labels |
 | -- | -- |
 | `noroshi_check_up` | page, component, check, type, alert |
+| `noroshi_check_info` | page, component, check, name, target |
+| `noroshi_check_failure_info` | page, component, check, reason |
 | `noroshi_check_duration_seconds` | page, component, check |
 | `noroshi_check_last_run_timestamp_seconds` | page, component, check |
 | `noroshi_check_interval_seconds` | page, component, check |
@@ -183,6 +226,8 @@ Delivery is retried on network errors, 429, and 5xx, three tries in all, and eac
 | `noroshi_prober_leader` | |
 
 Only the leader reports check and component series. With several replicas, aggregate across instances in your alert rules.
+
+`noroshi_check_info` and `noroshi_check_failure_info` are always 1. The name follows `NOROSHI_DEFAULT_LOCALE`. A failure reason stays until the check is up again, so it is still there while a down check recovers.
 
 ## Development
 
@@ -194,7 +239,8 @@ make vet
 make validate     # check deploy/config.example.yaml
 make image        # local architecture
 make image-amd64  # for x86_64 hosts
-make rules-check  # promtool on deploy/prometheus/rules.yaml
+make rules-check  # promtool check and unit tests for deploy/prometheus/rules.yaml
+make chart-check  # helm lint and kubeconform for charts/noroshi
 ```
 
 Two local stacks run the demo config in [deploy/config.demo.yaml](deploy/config.demo.yaml):
@@ -210,7 +256,7 @@ In the e2e stack, sign in as `e2e-admin` (member of `noroshi-admins`) or `e2e-vi
 
 Work happens on `dev`, the default branch. `main` holds the latest release, and release tags are cut from it.
 
-CI runs the tests on `main` and `dev` and builds images only for version tags. `vX.Y.Z` publishes `X.Y.Z`, `X.Y`, and `latest`; a pre-release such as `vX.Y.Z-rc.1` publishes only its own tag, which is handy for trying a build on a real host before releasing it.
+CI runs the tests on `main` and `dev` and builds images only for version tags. `vX.Y.Z` publishes `X.Y.Z`, `X.Y`, and `latest`; a pre-release such as `vX.Y.Z-rc.1` publishes only its own tag, which is handy for trying a build on a real host before releasing it. A `chart-X.Y.Z` tag publishes the chart, and only when it matches `version` in Chart.yaml.
 
 Layout: `internal/judge` (state rules), `internal/uptime` (daily buckets), `internal/probe` (check runners), `internal/prober` (leader loop), `internal/store` (Postgres), `internal/web` (pages), `internal/auth` (OIDC).
 

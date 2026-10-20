@@ -16,19 +16,20 @@ import (
 
 // CheckRow is an active check with what the prober needs to run it.
 type CheckRow struct {
-	ID           int64
-	ComponentID  int64
-	PageKey      string
-	ComponentKey string
-	Key          string
-	Type         string
-	Spec         config.Check
+	ID            int64
+	ComponentID   int64
+	PageKey       string
+	ComponentKey  string
+	ComponentName i18n.Text
+	Key           string
+	Type          string
+	Spec          config.Check
 }
 
 // ActiveChecks lists checks whose page, component, and check are not archived.
 func (s *Store) ActiveChecks(ctx context.Context) ([]CheckRow, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT k.id, k.component_id, p.key, c.key, k.key, k.type, k.spec
+		SELECT k.id, k.component_id, p.key, c.key, c.name, k.key, k.type, k.spec
 		FROM checks k
 		JOIN component c ON c.id = k.component_id
 		JOIN page p ON p.id = c.page_id
@@ -41,9 +42,12 @@ func (s *Store) ActiveChecks(ctx context.Context) ([]CheckRow, error) {
 	var out []CheckRow
 	for rows.Next() {
 		var r CheckRow
-		var spec []byte
-		if err := rows.Scan(&r.ID, &r.ComponentID, &r.PageKey, &r.ComponentKey, &r.Key, &r.Type, &spec); err != nil {
+		var name, spec []byte
+		if err := rows.Scan(&r.ID, &r.ComponentID, &r.PageKey, &r.ComponentKey, &name, &r.Key, &r.Type, &spec); err != nil {
 			return nil, err
+		}
+		if err := scanJSON(name, &r.ComponentName); err != nil {
+			return nil, fmt.Errorf("check %d component name: %w", r.ID, err)
 		}
 		if err := scanJSON(spec, &r.Spec); err != nil {
 			return nil, fmt.Errorf("check %d spec: %w", r.ID, err)

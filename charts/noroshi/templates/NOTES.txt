@@ -1,0 +1,13 @@
+noroshi {{ .Chart.AppVersion }} is installed as {{ include "noroshi.fullname" . }}.
+
+Status page:  {{ .Values.baseURL | default (printf "service/%s port %v" (include "noroshi.fullname" .) .Values.service.public.port) }}
+Admin pages:  {{ .Values.adminURL | default (printf "service/%s port %v" (include "noroshi.serviceName" (list . "admin")) .Values.service.admin.port) }}
+Metrics:      service/{{ include "noroshi.serviceName" (list . "ops") }} port {{ .Values.service.ops.port }} /metrics
+
+The pods read secrets from Secret {{ .Values.secret.name }}:
+{{- range $name, $key := .Values.secret.env }}
+  {{ $name }} <- key {{ $key }}
+{{- end }}
+
+Only the replica holding the prober lock reports check metrics, so alert
+rules should aggregate across pods. See deploy/prometheus/rules.yaml.
