@@ -732,15 +732,27 @@ func (s *Server) handleUpdateDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
-// incidentURL is where people outside can read an incident: the admin
-// listener for a private page, the public one otherwise. It is empty when
-// that listener's base URL is not set.
+// listenerBase is the base URL of the listener that serves a page: the
+// admin one for a private page, the public one otherwise. It may be empty.
+func (s *Server) listenerBase(pageKey string) string {
+	if s.private(pageKey) {
+		return s.env.AdminURL
+	}
+	return s.env.BaseURL
+}
+
+// pageURL and incidentURL are where people outside can read a page or an
+// incident. They are empty when the listener's base URL is not set.
+func (s *Server) pageURL(pageKey string) string {
+	if b := s.listenerBase(pageKey); b != "" {
+		return b + "/p/" + pageKey
+	}
+	return ""
+}
+
 func (s *Server) incidentURL(pageKey string, id int64) string {
-	switch {
-	case s.private(pageKey) && s.env.AdminURL != "":
-		return s.env.AdminURL + incidentPath(pageKey, id)
-	case !s.private(pageKey) && s.env.BaseURL != "":
-		return s.env.BaseURL + incidentPath(pageKey, id)
+	if b := s.listenerBase(pageKey); b != "" {
+		return b + incidentPath(pageKey, id)
 	}
 	return ""
 }

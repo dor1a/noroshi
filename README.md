@@ -182,6 +182,7 @@ curl -X POST https://status-admin.example.com/api/v1/admin/incidents \
 | `DELETE /api/v1/admin/incidents/{id}/updates/{uid}` | Any update but the newest, which carries the stage (409) |
 | `DELETE /api/v1/admin/incidents/{id}` | The incident and its timeline |
 | `GET /api/v1/admin/incidents`, `GET …/{id}` | Open incidents and those resolved in the last 30 days (`?page=` filters), or one incident |
+| `GET /api/v1/admin/pages` | Every page, private ones included, with its groups, component keys, and the status each shows now |
 
 Components are named by their key in the config. Updates written with a token show `api:<key>` as the author. Errors come back as JSON `{"error": "..."}`.
 

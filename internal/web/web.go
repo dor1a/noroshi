@@ -586,6 +586,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.Handle("POST /admin/incidents/{id}/updates/{uid}", s.auth.Require(http.HandlerFunc(s.handleUpdateEdit)))
 	mux.Handle("POST /admin/incidents/{id}/updates/{uid}/delete", s.auth.Require(http.HandlerFunc(s.handleUpdateDelete)))
 	// Scripts write incidents with bearer tokens instead of a session.
+	mux.Handle("GET /api/v1/admin/pages", s.apiAuth(s.handleAPIPages))
 	mux.Handle("GET /api/v1/admin/incidents", s.apiAuth(s.handleAPIIncidents))
 	mux.Handle("POST /api/v1/admin/incidents", s.apiAuth(s.handleAPIIncidentCreate))
 	mux.Handle("GET /api/v1/admin/incidents/{id}", s.apiAuth(s.handleAPIIncident))

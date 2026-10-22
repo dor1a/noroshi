@@ -131,6 +131,27 @@ func (s *Server) adminIncidentJSON(in store.Incident) adminIncident {
 	return out
 }
 
+type adminPage struct {
+	Key        string       `json:"key"`
+	Title      string       `json:"title"`
+	Visibility string       `json:"visibility"`
+	Status     judge.Status `json:"status"`
+	URL        string       `json:"url,omitempty"`
+	Groups     []adminGroup `json:"groups"`
+}
+
+type adminGroup struct {
+	Key        string               `json:"key"`
+	Name       string               `json:"name"`
+	Components []adminPageComponent `json:"components"`
+}
+
+type adminPageComponent struct {
+	Key    string       `json:"key"`
+	Name   string       `json:"name"`
+	Status judge.Status `json:"status"`
+}
+
 type incidentIn struct {
 	Page       string                  `json:"page"`
 	Title      string                  `json:"title"`
@@ -269,6 +290,43 @@ func (s *Server) writeIncident(w http.ResponseWriter, r *http.Request, status in
 		w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/incidents/%d", id))
 	}
 	writeJSON(w, status, s.adminIncidentJSON(*in))
+}
+
+// handleAPIPages lists every page, private ones included, with the
+// component keys an incident can name and the status each shows now.
+func (s *Server) handleAPIPages(w http.ResponseWriter, r *http.Request) {
+	pages, err := s.store.Pages(r.Context())
+	if err != nil {
+		s.apiFail(w, r, err)
+		return
+	}
+	locale := s.env.DefaultLocale
+	out := struct {
+		Pages []adminPage `json:"pages"`
+	}{[]adminPage{}}
+	for _, p := range pages {
+		d, err := s.loadPage(r.Context(), p)
+		if err != nil {
+			s.apiFail(w, r, err)
+			return
+		}
+		ap := adminPage{
+			Key: p.Key, Title: p.Title.Get(locale), Visibility: "public", Status: d.Overall,
+			URL: s.pageURL(p.Key), Groups: []adminGroup{},
+		}
+		if s.private(p.Key) {
+			ap.Visibility = "private"
+		}
+		for _, g := range d.Groups {
+			ag := adminGroup{Key: g.Key, Name: g.Name.Get(locale), Components: []adminPageComponent{}}
+			for _, c := range g.Components {
+				ag.Components = append(ag.Components, adminPageComponent{Key: c.Key, Name: c.Name.Get(locale), Status: c.Status})
+			}
+			ap.Groups = append(ap.Groups, ag)
+		}
+		out.Pages = append(out.Pages, ap)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleAPIIncidents(w http.ResponseWriter, r *http.Request) {

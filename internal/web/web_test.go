@@ -454,6 +454,7 @@ func TestAdminAPIAuth(t *testing.T) {
 		want               int
 	}{
 		{http.MethodGet, "/api/v1/admin/incidents", "", http.StatusUnauthorized},
+		{http.MethodGet, "/api/v1/admin/pages", "", http.StatusUnauthorized},
 		{http.MethodDelete, "/api/v1/admin/incidents/1", "", http.StatusUnauthorized},
 		{http.MethodGet, "/api/v1/admin/nothing", "", http.StatusNotFound},
 		{http.MethodPost, "/api/v1/admin/incidents", "cross-site", http.StatusForbidden},

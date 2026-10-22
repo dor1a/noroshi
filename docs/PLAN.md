@@ -247,6 +247,7 @@ api_tokens:
 | -- | -- | -- |
 | GET | `/api/v1/admin/incidents` | Open incidents and those resolved in the last 30 days; `?page=` filters |
 | GET | `/api/v1/admin/incidents/{id}` | One incident with its timeline |
+| GET | `/api/v1/admin/pages` | Every page with its groups, component keys, and current statuses, so a script knows what it can name |
 | POST | `/api/v1/admin/incidents` | Create: page, title, stage, body, components, notify |
 | POST | `/api/v1/admin/incidents/{id}/updates` | Add an update: stage, body, components, notify. Stage and components left out keep the current ones |
 | PATCH | `/api/v1/admin/incidents/{id}/updates/{uid}` | Correct an update's body |
