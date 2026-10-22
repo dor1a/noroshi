@@ -72,7 +72,7 @@ func TestPublicTemplates(t *testing.T) {
 	for _, locale := range []string{"ko", "en"} {
 		v := s.pageView(samplePage(), locale, "tokyonight", true, false)
 		out := render(t, s, "page", v)
-		for _, want := range []string{`data-theme="tokyonight"`, `class="verdict-box vt-major_outage"`, `class="vb-icon"`, `<svg viewBox="0 0 20 20"`, `class="dot s-major_outage"`, `class="ticks"`, "/p/home/live?lang=" + locale} {
+		for _, want := range []string{`data-theme="tokyonight"`, `class="verdict-box vt-major_outage"`, `class="vb-body"`, `class="vb-icon"`, `<svg viewBox="0 0 20 20"`, `class="dot s-major_outage"`, `class="ticks"`, "/p/home/live?lang=" + locale} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("%s page missing %q", locale, want)
 			}
@@ -207,6 +207,7 @@ func TestListenerRoutes(t *testing.T) {
 
 func sampleIncidents(now time.Time) []store.Incident {
 	resolvedAt := now.Add(-24 * time.Hour)
+	edited := now.Add(-50 * time.Minute)
 	return []store.Incident{
 		{
 			ID: 3, PageKey: "home", Title: "DB unreachable", Stage: store.StageIdentified, StartedAt: now.Add(-time.Hour),
@@ -214,7 +215,8 @@ func sampleIncidents(now time.Time) []store.Incident {
 			Updates: []store.IncidentUpdate{
 				{ID: 6, Stage: store.StageIdentified, Body: "Disk full.\nCleaning up.", At: now.Add(-30 * time.Minute), Author: "kim",
 					Notifications: []store.Notification{{Notifier: "teams", OK: false, Attempts: 3, Detail: "HTTP 400"}}},
-				{ID: 5, Stage: store.StageInvestigating, Body: "Looking into it.", At: now.Add(-time.Hour), Author: "kim"},
+				{ID: 5, Stage: store.StageInvestigating, Body: "Looking into it.", At: now.Add(-time.Hour), Author: "kim",
+					EditedAt: &edited, EditedBy: "park"},
 			},
 		},
 		{
@@ -238,7 +240,13 @@ func TestIncidentTemplates(t *testing.T) {
 			t.Fatalf("page missing %q", want)
 		}
 	}
-	for _, leak := range []string{"HTTP 400", "kim", "teams"} {
+	if !strings.Contains(out, `<span class="edited" title="Edited 2026-10-13 11:10 KST">Edited</span>`) {
+		t.Fatal("public page does not mark the edited update")
+	}
+	if strings.Contains(out, `class="vb-body"`) {
+		t.Fatal("verdict text repeats what the open incident says")
+	}
+	for _, leak := range []string{"HTTP 400", "kim", "teams", "park", "/updates/"} {
 		if strings.Contains(out, leak) {
 			t.Fatalf("public page leaks %q", leak)
 		}
@@ -276,6 +284,15 @@ func TestIncidentTemplates(t *testing.T) {
 	}{base, s.incidentView(in, "ko", time.UTC, true), fv, ""})
 	if !strings.Contains(out, "teams 전송 실패(3회 시도): HTTP 400") || !strings.Contains(out, "kim") {
 		t.Fatal("admin view must show delivery results and authors")
+	}
+	for _, want := range []string{`action="/admin/incidents/3/updates/6"`, `action="/admin/incidents/3/updates/5"`,
+		`action="/admin/incidents/3/updates/5/delete"`, "에 수정 · park"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("admin view missing %q", want)
+		}
+	}
+	if strings.Contains(out, "updates/6/delete") {
+		t.Fatal("the latest update must not offer delete")
 	}
 }
 

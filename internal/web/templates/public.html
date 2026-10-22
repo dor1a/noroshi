@@ -22,9 +22,12 @@
 <div id="live" class="live" hx-get="{{.LivePath}}" hx-trigger="every 60s" hx-swap="outerHTML">
   <section class="verdict-box vt-{{.Overall}}">
     <p class="vb-head"><span class="vb-icon" aria-hidden="true">{{statusIcon .Overall}}</span>{{t .Locale (printf "banner.%s" .Overall)}}</p>
+    {{- /* An open incident below already explains what is going on. */}}
+    {{if not .Active}}
     <div class="vb-body">
       <p>{{t .Locale (printf "verdict.%s" .Overall)}}</p>
     </div>
+    {{end}}
   </section>
   {{range .Active}}{{template "incident_card" .}}{{end}}
   <section class="card">
@@ -96,9 +99,27 @@
   <ol class="timeline">
     {{range .Updates}}
     <li class="st-{{.StageKey}}">
-      <p class="when"><span class="stage-name">{{.StageLabel}}</span> <time>{{fmtTime .At $.Loc}}</time>{{with .Author}} <span class="by">{{.}}</span>{{end}}</p>
+      <p class="when"><span class="stage-name">{{.StageLabel}}</span> <time>{{fmtTime .At $.Loc}}</time>{{with .Author}} <span class="by">{{.}}</span>{{end}}{{with .EditedTip}} <span class="edited" title="{{.}}">{{t $.Locale "incident.edited"}}</span>{{end}}</p>
       <p class="body">{{.Body}}</p>
       {{range .Notes}}<p class="note{{if not .OK}} bad{{end}}">{{.Text}}</p>{{end}}
+      {{if $.Admin}}
+      <details class="update-tools">
+        <summary>{{if .Latest}}{{t $.Locale "admin.update_edit"}}{{else}}{{t $.Locale "admin.update_edit_delete"}}{{end}}</summary>
+        <form class="form" method="post" action="/admin/incidents/{{$.ID}}/updates/{{.ID}}">
+          <textarea name="body" rows="4" maxlength="5000" required aria-label="{{t $.Locale "admin.incident_body"}}">{{.Body}}</textarea>
+          <p class="hint">{{t $.Locale "admin.update_edit_tip"}}</p>
+          <div><button type="submit" class="button">{{t $.Locale "admin.update_save"}}</button></div>
+        </form>
+        {{if .Latest}}
+        <p class="hint">{{t $.Locale "admin.update_latest_tip"}}</p>
+        {{else}}
+        <form class="form" method="post" action="/admin/incidents/{{$.ID}}/updates/{{.ID}}/delete">
+          <label class="choice"><input type="checkbox" name="confirm" value="1" required> {{t $.Locale "admin.update_delete_confirm"}}</label>
+          <div><button type="submit" class="button danger">{{t $.Locale "admin.update_delete"}}</button></div>
+        </form>
+        {{end}}
+      </details>
+      {{end}}
     </li>
     {{end}}
   </ol>

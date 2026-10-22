@@ -26,6 +26,10 @@ var Stages = []string{StageInvestigating, StageIdentified, StageMonitoring, Stag
 // ErrNotFound is returned when an incident does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrLatestUpdate is returned when deleting an incident's newest update,
+// which carries its current stage.
+var ErrLatestUpdate = errors.New("latest update")
+
 // Incident is an incident with its timeline and affected components.
 type Incident struct {
 	ID         int64
@@ -61,6 +65,8 @@ type IncidentUpdate struct {
 	Body          string
 	At            time.Time
 	Author        string
+	EditedAt      *time.Time
+	EditedBy      string
 	Notifications []Notification
 }
 
@@ -225,6 +231,51 @@ func (s *Store) DeleteIncident(ctx context.Context, id int64) error {
 	return err
 }
 
+// EditUpdate replaces an update's text. Its stage, time, and the component
+// statuses it set stay as posted.
+func (s *Store) EditUpdate(ctx context.Context, incidentID, updateID int64, body, by string, at time.Time) error {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE incident_update SET body = $3, edited_at = $4, edited_by = $5
+		WHERE id = $2 AND incident_id = $1`, incidentID, updateID, body, at, by)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+// DeleteUpdate removes one update from a timeline. The newest update carries
+// the incident's stage and stays; component statuses are not touched.
+func (s *Store) DeleteUpdate(ctx context.Context, incidentID, updateID int64) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM incident WHERE id = $1 FOR UPDATE`, incidentID); err != nil {
+		return err
+	}
+	var latest int64
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM incident_update WHERE incident_id = $1
+		ORDER BY at DESC, id DESC LIMIT 1`, incidentID).Scan(&latest); err != nil {
+		if isNoRows(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if latest == updateID {
+		return ErrLatestUpdate
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM incident_update WHERE id = $2 AND incident_id = $1`, incidentID, updateID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit(ctx)
+}
+
 // Incident loads one incident.
 func (s *Store) Incident(ctx context.Context, id int64) (*Incident, error) {
 	list, err := s.loadIncidents(ctx, `i.id = $1`, id)
@@ -306,7 +357,7 @@ func (s *Store) loadIncidents(ctx context.Context, where string, args ...any) ([
 	}
 
 	urows, err := s.Pool.Query(ctx, `
-		SELECT id, incident_id, stage, body, at, author FROM incident_update
+		SELECT id, incident_id, stage, body, at, author, edited_at, coalesce(edited_by, '') FROM incident_update
 		WHERE incident_id = ANY($1) ORDER BY at DESC, id DESC`, ids)
 	if err != nil {
 		return nil, err
@@ -314,7 +365,7 @@ func (s *Store) loadIncidents(ctx context.Context, where string, args ...any) ([
 	for urows.Next() {
 		var u IncidentUpdate
 		var iid int64
-		if err := urows.Scan(&u.ID, &iid, &u.Stage, &u.Body, &u.At, &u.Author); err != nil {
+		if err := urows.Scan(&u.ID, &iid, &u.Stage, &u.Body, &u.At, &u.Author, &u.EditedAt, &u.EditedBy); err != nil {
 			urows.Close()
 			return nil, err
 		}

@@ -184,7 +184,7 @@ The 90-day bars and percentages on the public page follow these rules.
 | `component_status_event` | component, status, at, source | prober (kept for good) |
 | `prober_session` | instance, started_at, last_seen_at | prober (kept for good). Time outside these sessions counts as no data |
 | `incident` | page, title, stage, started_at, resolved_at, created_by. There is no separate impact field; it is the worst of the component statuses | admins (phase 2) |
-| `incident_update` | incident, stage, body, at, author | admins (phase 2) |
+| `incident_update` | incident, stage, body, at, author, edited_at, edited_by. Only the body can be edited. The newest update carries the incident's stage and cannot be deleted | admins (phase 2) |
 | `incident_component` | incident, component, status, since, until. The status of an open interval replaces the check result and counts toward uptime | admins (phase 2) |
 | `notification` | update, notifier, ok, attempts, detail, at. Webhook URLs are not stored | announcements (phase 2) |
 

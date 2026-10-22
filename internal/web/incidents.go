@@ -45,11 +45,14 @@ type noteView struct {
 }
 
 type updateView struct {
+	ID         int64
 	StageKey   string
 	StageLabel string
 	Body       string
 	Author     string
 	At         time.Time
+	EditedTip  string // set when edited; says when, and by whom on admin pages
+	Latest     bool   // the newest update cannot be deleted
 	Notes      []noteView
 }
 
@@ -95,13 +98,19 @@ func (s *Server) incidentView(in store.Incident, locale string, loc *time.Locati
 	for _, c := range in.Components {
 		v.Affected = append(v.Affected, affectedView{Name: c.Name.Get(locale), Status: c.Status})
 	}
-	for _, u := range in.Updates {
+	for i, u := range in.Updates {
 		uv := updateView{
-			StageKey: u.Stage, StageLabel: i18n.T(locale, "incident.stage."+u.Stage),
-			Body: u.Body, At: u.At,
+			ID: u.ID, StageKey: u.Stage, StageLabel: i18n.T(locale, "incident.stage."+u.Stage),
+			Body: u.Body, At: u.At, Latest: i == 0,
 		}
 		if admin {
 			uv.Author = u.Author
+		}
+		if u.EditedAt != nil {
+			uv.EditedTip = fmt.Sprintf(i18n.T(locale, "incident.edited_at"), fmtTime(*u.EditedAt, loc))
+			if admin && u.EditedBy != "" {
+				uv.EditedTip += " · " + u.EditedBy
+			}
 		}
 		for _, n := range u.Notifications {
 			if !admin {
@@ -251,7 +260,7 @@ func readIncidentForm(r *http.Request, locale string, comps []store.ComponentRow
 	f = incidentForm{
 		Title:  strings.TrimSpace(r.PostFormValue("title")),
 		Stage:  r.PostFormValue("stage"),
-		Body:   strings.TrimSpace(strings.ReplaceAll(r.PostFormValue("body"), "\r\n", "\n")),
+		Body:   postedBody(r),
 		Notify: r.PostFormValue("notify") == "1",
 	}
 	bad := func(key string) { f.Errors = append(f.Errors, i18n.T(locale, key)) }
@@ -281,13 +290,25 @@ func readIncidentForm(r *http.Request, locale string, comps []store.ComponentRow
 			bad("admin.err_title_long")
 		}
 	}
-	switch {
-	case f.Body == "":
-		bad("admin.err_body")
-	case utf8.RuneCountInString(f.Body) > maxBody:
-		bad("admin.err_body_long")
+	if key := checkBody(f.Body); key != "" {
+		bad(key)
 	}
 	return f, statuses, raw
+}
+
+func postedBody(r *http.Request) string {
+	return strings.TrimSpace(strings.ReplaceAll(r.PostFormValue("body"), "\r\n", "\n"))
+}
+
+// checkBody returns the message key for an unusable body, or "".
+func checkBody(body string) string {
+	switch {
+	case body == "":
+		return "admin.err_body"
+	case utf8.RuneCountInString(body) > maxBody:
+		return "admin.err_body_long"
+	}
+	return ""
 }
 
 func readForm(w http.ResponseWriter, r *http.Request) error {
@@ -615,6 +636,89 @@ func (s *Server) handleIncidentDelete(w http.ResponseWriter, r *http.Request) {
 	s.invalidate()
 	s.log.Warn("incident deleted", "incident", in.ID, "title", in.Title, "by", author(r))
 	http.Redirect(w, r, "/admin/incidents", http.StatusSeeOther)
+}
+
+// loadUpdate finds the update named in the path within its incident.
+func (s *Server) loadUpdate(w http.ResponseWriter, r *http.Request, locale string) (*store.Incident, *store.IncidentUpdate) {
+	in := s.loadIncident(w, r, locale)
+	if in == nil {
+		return nil, nil
+	}
+	if uid, err := strconv.ParseInt(r.PathValue("uid"), 10, 64); err == nil {
+		for i := range in.Updates {
+			if in.Updates[i].ID == uid {
+				return in, &in.Updates[i]
+			}
+		}
+	}
+	s.renderError(w, r, http.StatusNotFound, i18n.T(locale, "page.notfound"))
+	return nil, nil
+}
+
+// handleUpdateEdit corrects an update's text. It is not announced again.
+func (s *Server) handleUpdateEdit(w http.ResponseWriter, r *http.Request) {
+	base, err := s.adminBase(w, r, "incidents")
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := readForm(w, r); err != nil {
+		s.renderError(w, r, http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
+		return
+	}
+	in, u := s.loadUpdate(w, r, base.Locale)
+	if u == nil {
+		return
+	}
+	body := postedBody(r)
+	if key := checkBody(body); key != "" {
+		s.renderError(w, r, http.StatusUnprocessableEntity, i18n.T(base.Locale, key))
+		return
+	}
+	back := fmt.Sprintf("/admin/incidents/%d", in.ID)
+	if body == u.Body {
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
+	if err := s.store.EditUpdate(r.Context(), in.ID, u.ID, body, author(r), time.Now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.fail(w, r, err)
+		return
+	}
+	s.invalidate()
+	s.log.Info("incident update edited", "incident", in.ID, "update", u.ID, "by", author(r))
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+func (s *Server) handleUpdateDelete(w http.ResponseWriter, r *http.Request) {
+	base, err := s.adminBase(w, r, "incidents")
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := readForm(w, r); err != nil {
+		s.renderError(w, r, http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
+		return
+	}
+	in, u := s.loadUpdate(w, r, base.Locale)
+	if u == nil {
+		return
+	}
+	back := fmt.Sprintf("/admin/incidents/%d", in.ID)
+	if r.PostFormValue("confirm") != "1" {
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
+	switch err := s.store.DeleteUpdate(r.Context(), in.ID, u.ID); {
+	case errors.Is(err, store.ErrLatestUpdate):
+		s.renderError(w, r, http.StatusConflict, i18n.T(base.Locale, "admin.err_delete_latest"))
+		return
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		s.fail(w, r, err)
+		return
+	}
+	s.invalidate()
+	s.log.Warn("incident update deleted", "incident", in.ID, "update", u.ID, "stage", u.Stage, "at", u.At, "by", author(r))
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // announce sends one update to the page's channels in the background and

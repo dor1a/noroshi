@@ -231,10 +231,8 @@ var funcs = template.FuncMap{
 	"tf": func(locale, key string, args ...any) string {
 		return fmt.Sprintf(i18n.T(locale, key), args...)
 	},
-	"pct": pct,
-	"fmtTime": func(t time.Time, loc *time.Location) string {
-		return t.In(loc).Format("2006-01-02 15:04 MST")
-	},
+	"pct":      pct,
+	"fmtTime":  fmtTime,
 	"dayClass": dayClass,
 	"incidentTable": func(locale string, rows []incidentRow) any {
 		return struct {
@@ -493,6 +491,10 @@ type errorView struct {
 	Locale, Theme, DocTitle, Message string
 }
 
+func fmtTime(t time.Time, loc *time.Location) string {
+	return t.In(loc).Format("2006-01-02 15:04 MST")
+}
+
 func (s *Server) renderError(w http.ResponseWriter, r *http.Request, status int, msg string) {
 	s.render(w, status, "error", errorView{Locale: s.locale(w, r), Theme: s.theme(w, r), DocTitle: docTitle("noroshi", msg), Message: msg})
 }
@@ -568,6 +570,8 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.Handle("GET /admin/incidents/{id}", s.auth.Require(http.HandlerFunc(s.handleIncident)))
 	mux.Handle("POST /admin/incidents/{id}/updates", s.auth.Require(http.HandlerFunc(s.handleIncidentUpdate)))
 	mux.Handle("POST /admin/incidents/{id}/delete", s.auth.Require(http.HandlerFunc(s.handleIncidentDelete)))
+	mux.Handle("POST /admin/incidents/{id}/updates/{uid}", s.auth.Require(http.HandlerFunc(s.handleUpdateEdit)))
+	mux.Handle("POST /admin/incidents/{id}/updates/{uid}/delete", s.auth.Require(http.HandlerFunc(s.handleUpdateDelete)))
 	// Every page, private ones included, for signed-in admins.
 	viewer := func(h http.HandlerFunc) http.Handler { return s.auth.Require(adminView(h)) }
 	mux.Handle("GET /pages", viewer(s.handleIndex))

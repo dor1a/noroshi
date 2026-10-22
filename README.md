@@ -26,7 +26,7 @@ The UI is in English with a full Korean translation.
 - Rolls check states up into a component status and shows 90 days of daily uptime bars.
 - Exports Prometheus metrics. noroshi sends no check alerts itself; Prometheus and Alertmanager do (see [Alerting](#alerting)).
 - Puts the admin pages behind any OIDC provider. Admin rights come from a group in the ID token.
-- Lets admins write incidents with a timeline (investigating, identified, monitoring, resolved). A status set on a component in an open incident replaces what its checks say and counts toward uptime. Each update can be announced to Discord or Microsoft Teams.
+- Lets admins write incidents with a timeline (investigating, identified, monitoring, resolved). A status set on a component in an open incident replaces what its checks say and counts toward uptime. Each update can be announced to Discord or Microsoft Teams. An update's text can be corrected later; the page marks it as edited and the correction is not announced. Any update but the latest can be deleted.
 - Lets several replicas share one database. A Postgres advisory lock picks the one instance that runs checks, and another takes over within about 10 seconds if it stops.
 
 ## Quick look
