@@ -3,8 +3,8 @@ name: noroshi
 description: A status page with built-in health checks and incident timelines
 type: application
 # The chart is versioned on its own (chart-X.Y.Z tags); appVersion is the image it installs by default.
-version: 0.1.1
-appVersion: "0.2.1"
+version: 0.1.2
+appVersion: "0.3.0"
 kubeVersion: ">=1.25.0-0"
 home: https://github.com/dor1a/noroshi
 icon: https://raw.githubusercontent.com/dor1a/noroshi/main/internal/web/static/favicon.svg

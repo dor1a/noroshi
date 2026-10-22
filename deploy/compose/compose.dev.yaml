@@ -27,6 +27,7 @@ services:
       NOROSHI_BASE_URL: http://localhost:18080
       NOROSHI_WEBHOOK_DISCORD: ${NOROSHI_DEV_DISCORD_URL:-http://webhook-sink:8000/discord}
       NOROSHI_WEBHOOK_TEAMS: ${NOROSHI_DEV_TEAMS_URL:-http://webhook-sink:8000/teams}
+      NOROSHI_API_TOKEN_DEV: dev-api-token-0123456789abcdef0123
       TZ: Asia/Seoul
     volumes:
       - ../config.demo.yaml:/etc/noroshi/config.yaml:ro

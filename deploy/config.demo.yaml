@@ -11,6 +11,10 @@ notifiers:
     url_env: NOROSHI_WEBHOOK_TEAMS
     locale: ko
 
+api_tokens:
+  - key: dev
+    token_env: NOROSHI_API_TOKEN_DEV
+
 admin:
   title:
     ko: noroshi 데모

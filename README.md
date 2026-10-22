@@ -26,7 +26,7 @@ The UI is in English with a full Korean translation.
 - Rolls check states up into a component status and shows 90 days of daily uptime bars.
 - Exports Prometheus metrics. noroshi sends no check alerts itself; Prometheus and Alertmanager do (see [Alerting](#alerting)).
 - Puts the admin pages behind any OIDC provider. Admin rights come from a group in the ID token.
-- Lets admins write incidents with a timeline (investigating, identified, monitoring, resolved). A status set on a component in an open incident replaces what its checks say and counts toward uptime. Each update can be announced to Discord or Microsoft Teams. An update's text can be corrected later; the page marks it as edited and the correction is not announced. Any update but the latest can be deleted.
+- Lets admins write incidents with a timeline (investigating, identified, monitoring, resolved). A status set on a component in an open incident replaces what its checks say and counts toward uptime. Each update can be announced to Discord or Microsoft Teams. An update's text can be corrected later; the page marks it as edited and the correction is not announced. Any update but the latest can be deleted. Scripts can do all of this through a token-protected API.
 - Lets several replicas share one database. A Postgres advisory lock picks the one instance that runs checks, and another takes over within about 10 seconds if it stops.
 
 ## Quick look
@@ -157,6 +157,34 @@ Delivery is retried on network errors, 429, and 5xx, three tries in all, and eac
 
 Announcements are optional. Without `notifiers`, incidents only show on the pages.
 
+### Incident API
+
+Scripts write incidents on the admin listener with a bearer token, under the same rules as the admin pages. Tokens are listed by name and read from the environment like webhook URLs. noroshi refuses to start when a named variable is missing or shorter than 32 characters.
+
+```yaml
+api_tokens:
+  - key: ops
+    token_env: NOROSHI_API_TOKEN_OPS
+```
+
+```sh
+curl -X POST https://status-admin.example.com/api/v1/admin/incidents \
+  -H "Authorization: Bearer $NOROSHI_API_TOKEN_OPS" \
+  -H "Content-Type: application/json" \
+  -d '{"page":"home","title":"Database maintenance","stage":"identified","body":"Patching the database.","components":{"db":"under_maintenance"},"notify":true}'
+```
+
+| Request | Body and behaviour |
+| -- | -- |
+| `POST /api/v1/admin/incidents` | `page`, `title`, `stage` (default `investigating`), `body`, `components`, `notify` |
+| `POST /api/v1/admin/incidents/{id}/updates` | `stage`, `body`, `components`, `notify`. Leaving out `stage` or `components` keeps the current ones. On a resolved incident the update is a note |
+| `PATCH /api/v1/admin/incidents/{id}/updates/{uid}` | `body`. The page marks the update as edited, and it is not announced again |
+| `DELETE /api/v1/admin/incidents/{id}/updates/{uid}` | Any update but the newest, which carries the stage (409) |
+| `DELETE /api/v1/admin/incidents/{id}` | The incident and its timeline |
+| `GET /api/v1/admin/incidents`, `GET …/{id}` | Open incidents and those resolved in the last 30 days (`?page=` filters), or one incident |
+
+Components are named by their key in the config. Updates written with a token show `api:<key>` as the author. Errors come back as JSON `{"error": "..."}`.
+
 ## Alerting
 
 Check alerts and incident announcements take different paths. noroshi only reports check states; Prometheus decides what is an alert and Alertmanager decides where it goes.
@@ -206,6 +234,7 @@ The [chart README](charts/noroshi/README.md) covers the values. The chart has it
 | public | `/api/v1/pages/{key}` | JSON summary with open incidents |
 | admin | `/admin` | Check states and recent results |
 | admin | `/admin/incidents` | Write and update incidents |
+| admin | `/api/v1/admin/incidents` | Incident API for scripts, with a bearer token |
 | admin | `/pages`, `/p/{key}` | Every page, private ones included |
 | ops | `/healthz` | Process is up (also on public and admin) |
 | ops | `/readyz` | Database is reachable |

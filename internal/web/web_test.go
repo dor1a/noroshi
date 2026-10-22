@@ -394,11 +394,108 @@ func TestTickTooltip(t *testing.T) {
 	if tipHead("ko", empty) != "데이터 없음" || tipNote("ko", empty) != "" {
 		t.Fatalf("no data: %q %q", tipHead("ko", empty), tipNote("ko", empty))
 	}
+
+	// Maintenance is left out of the percentage but still shows.
+	maint := uptime.Day{Date: d.Date, Up: 22 * time.Hour, Maint: 2*time.Hour + time.Minute, Worst: judge.Maintenance}
+	if got := tipHead("en", maint) + " | " + tipNote("en", maint); got != "100.00% uptime | 2h 1m maintenance" {
+		t.Fatalf("maintenance: %q", got)
+	}
+	if got := dayClass(maint); got != "d-ok has-maint" {
+		t.Fatalf("maintenance day class %q", got)
+	}
+	maint.Down = 30 * time.Minute
+	if got := tipNote("ko", maint); got != "장애 30분, 점검 2시간 1분" {
+		t.Fatalf("down and maintenance: %q", got)
+	}
+	if got := dayClass(uptime.Day{Maint: time.Hour, Worst: judge.Maintenance}); got != "d-maint" {
+		t.Fatalf("maintenance-only day class %q", got)
+	}
 }
 
 func TestDefaultLogo(t *testing.T) {
 	l := DefaultLogo()
 	if l.ContentType != "image/svg+xml" || len(l.Data) == 0 || len(l.Version) != 10 {
 		t.Fatalf("default logo: %s %d %q", l.ContentType, len(l.Data), l.Version)
+	}
+}
+
+func TestAdminAPIAuth(t *testing.T) {
+	s := newTestServer(t)
+	s.SetAPITokens(map[string]string{"ops": strings.Repeat("a", 40), "ci": strings.Repeat("b", 40)})
+	var seen string
+	h := s.apiAuth(func(w http.ResponseWriter, r *http.Request) { seen = apiAuthor(r) })
+	for _, tc := range []struct {
+		header, want string
+	}{
+		{"", ""},
+		{"Basic " + strings.Repeat("a", 40), ""},
+		{"Bearer " + strings.Repeat("c", 40), ""},
+		{"Bearer " + strings.Repeat("a", 40), "api:ops"},
+		{"bearer " + strings.Repeat("b", 40), "api:ci"},
+	} {
+		seen = ""
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/admin/incidents", nil)
+		if tc.header != "" {
+			r.Header.Set("Authorization", tc.header)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if seen != tc.want {
+			t.Fatalf("%q: author %q, want %q", tc.header, seen, tc.want)
+		}
+		if tc.want == "" && (rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") == "") {
+			t.Fatalf("%q: got %d without a challenge", tc.header, rec.Code)
+		}
+	}
+
+	admin := s.AdminHandler()
+	for _, tc := range []struct {
+		method, path, site string
+		want               int
+	}{
+		{http.MethodGet, "/api/v1/admin/incidents", "", http.StatusUnauthorized},
+		{http.MethodDelete, "/api/v1/admin/incidents/1", "", http.StatusUnauthorized},
+		{http.MethodGet, "/api/v1/admin/nothing", "", http.StatusNotFound},
+		{http.MethodPost, "/api/v1/admin/incidents", "cross-site", http.StatusForbidden},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, strings.NewReader("{}"))
+		if tc.site != "" {
+			r.Header.Set("Sec-Fetch-Site", tc.site)
+			r.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 40))
+		}
+		rec := httptest.NewRecorder()
+		admin.ServeHTTP(rec, r)
+		if rec.Code != tc.want {
+			t.Fatalf("%s %s: got %d, want %d", tc.method, tc.path, rec.Code, tc.want)
+		}
+		if tc.want != http.StatusForbidden && !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+			t.Fatalf("%s %s: not JSON", tc.method, tc.path)
+		}
+	}
+}
+
+func TestAPIStatusesAndJSON(t *testing.T) {
+	comps := []store.ComponentRow{{ID: 2, Key: "db"}, {ID: 9, Key: "web"}}
+	st, errs := apiStatuses(comps, map[string]judge.Status{"db": judge.Major, "web": judge.Maintenance})
+	if len(errs) != 0 || st[2] != judge.Major || st[9] != judge.Maintenance {
+		t.Fatalf("got %v %v", st, errs)
+	}
+	_, errs = apiStatuses(comps, map[string]judge.Status{"cache": judge.Major, "db": "on_fire", "web": judge.NoData})
+	if len(errs) != 3 || !strings.Contains(errs[0], `unknown component "cache"`) {
+		t.Fatalf("want three errors, got %v", errs)
+	}
+
+	decode := func(body string) error {
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		var in updateIn
+		return decodeJSON(httptest.NewRecorder(), r, &in)
+	}
+	if err := decode(`{"body":"ok","notify":true}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{`{"body":"x","title":"y"}`, `{"body":"x"} {}`, `not json`} {
+		if decode(bad) == nil {
+			t.Fatalf("%s should fail", bad)
+		}
 	}
 }

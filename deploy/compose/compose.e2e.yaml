@@ -66,6 +66,7 @@ services:
       NOROSHI_SESSION_KEY: e2e-session-key-0123456789abcdef0123
       NOROSHI_WEBHOOK_DISCORD: ${NOROSHI_E2E_DISCORD_URL:-http://webhook-sink:8000/discord}
       NOROSHI_WEBHOOK_TEAMS: ${NOROSHI_E2E_TEAMS_URL:-http://webhook-sink:8000/teams}
+      NOROSHI_API_TOKEN_DEV: e2e-api-token-0123456789abcdef0123
       TZ: Asia/Seoul
     volumes:
       - ../config.demo.yaml:/etc/noroshi/config.yaml:ro

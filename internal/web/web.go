@@ -64,6 +64,8 @@ type Server struct {
 	pages map[string]PageMeta
 	admin AdminMeta
 
+	apiTokens []apiToken
+
 	hideCredit bool
 }
 
@@ -283,13 +285,17 @@ func tipDate(locale string, d uptime.Day) string {
 }
 
 func tipNote(locale string, d uptime.Day) string {
-	if d.Down <= 0 {
-		return ""
+	var notes []string
+	if d.Down > 0 {
+		notes = append(notes, fmt.Sprintf(i18n.T(locale, "uptime.down"), fmtDuration(locale, d.Down)))
 	}
-	return fmt.Sprintf(i18n.T(locale, "uptime.down"), fmtDuration(locale, d.Down))
+	if d.Maint > 0 {
+		notes = append(notes, fmt.Sprintf(i18n.T(locale, "uptime.maint"), fmtDuration(locale, d.Maint)))
+	}
+	return strings.Join(notes, ", ")
 }
 
-// fmtDuration prints a downtime rounded up to the minute: "1h 23m" or "1시간 23분".
+// fmtDuration prints a duration rounded up to the minute: "1h 23m" or "1시간 23분".
 func fmtDuration(locale string, d time.Duration) string {
 	mins := int((d + time.Minute - 1) / time.Minute)
 	h, m := mins/60, mins%60
@@ -430,16 +436,23 @@ func dayClass(d uptime.Day) string {
 		}
 		return "d-none"
 	}
+	var c string
 	switch p := d.Percent(); {
 	case p >= 99.9:
-		return "d-ok"
+		c = "d-ok"
 	case p >= 99:
-		return "d-minor"
+		c = "d-minor"
 	case p >= 95:
-		return "d-warn"
+		c = "d-warn"
 	default:
-		return "d-bad"
+		c = "d-bad"
 	}
+	// Maintenance is left out of the percentage, so a day that had some
+	// gets a band to keep it visible.
+	if d.Maint > 0 {
+		c += " has-maint"
+	}
+	return c
 }
 
 // Themes are the colour sets in style.css.
@@ -547,10 +560,10 @@ func (s *Server) PublicHandler() http.Handler {
 	return securityHeaders(mux)
 }
 
-// AdminHandler serves login and the admin pages. Everything except the
-// login flow, the signed-out page, the logo, and static files requires a
-// session, so the listener can sit behind a public hostname. Cross-origin
-// form posts are refused.
+// AdminHandler serves login, the admin pages, and the admin API. Everything
+// except the login flow, the signed-out page, the logo, and static files
+// requires a session, or a bearer token for the API, so the listener can sit
+// behind a public hostname. Cross-origin form posts are refused.
 func (s *Server) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", staticHandler())
@@ -572,6 +585,17 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.Handle("POST /admin/incidents/{id}/delete", s.auth.Require(http.HandlerFunc(s.handleIncidentDelete)))
 	mux.Handle("POST /admin/incidents/{id}/updates/{uid}", s.auth.Require(http.HandlerFunc(s.handleUpdateEdit)))
 	mux.Handle("POST /admin/incidents/{id}/updates/{uid}/delete", s.auth.Require(http.HandlerFunc(s.handleUpdateDelete)))
+	// Scripts write incidents with bearer tokens instead of a session.
+	mux.Handle("GET /api/v1/admin/incidents", s.apiAuth(s.handleAPIIncidents))
+	mux.Handle("POST /api/v1/admin/incidents", s.apiAuth(s.handleAPIIncidentCreate))
+	mux.Handle("GET /api/v1/admin/incidents/{id}", s.apiAuth(s.handleAPIIncident))
+	mux.Handle("DELETE /api/v1/admin/incidents/{id}", s.apiAuth(s.handleAPIIncidentDelete))
+	mux.Handle("POST /api/v1/admin/incidents/{id}/updates", s.apiAuth(s.handleAPIIncidentUpdate))
+	mux.Handle("PATCH /api/v1/admin/incidents/{id}/updates/{uid}", s.apiAuth(s.handleAPIUpdateEdit))
+	mux.Handle("DELETE /api/v1/admin/incidents/{id}/updates/{uid}", s.apiAuth(s.handleAPIUpdateDelete))
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		apiError(w, http.StatusNotFound, "not found")
+	})
 	// Every page, private ones included, for signed-in admins.
 	viewer := func(h http.HandlerFunc) http.Handler { return s.auth.Require(adminView(h)) }
 	mux.Handle("GET /pages", viewer(s.handleIndex))

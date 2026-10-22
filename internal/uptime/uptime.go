@@ -27,7 +27,8 @@ type Day struct {
 	Date  time.Time // local midnight
 	Up    time.Duration
 	Down  time.Duration
-	Worst judge.Status // worst status seen while covered, NoData if none
+	Maint time.Duration // maintenance time, left out of Up and Down
+	Worst judge.Status  // worst status seen while covered, NoData if none
 }
 
 // HasData reports whether the day has any time that counts toward uptime.
@@ -130,6 +131,8 @@ func Compute(events []Event, covered []Interval, loc *time.Location, now time.Ti
 					days[d].Up += dur
 				case down:
 					days[d].Down += dur
+				case e.Status == judge.Maintenance:
+					days[d].Maint += dur
 				}
 				if e.Status.Severity() > days[d].Worst.Severity() {
 					days[d].Worst = e.Status

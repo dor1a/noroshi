@@ -358,6 +358,7 @@ time { font-variant-numeric: tabular-nums; }
 .ticks .d-warn { background: var(--partial); }
 .ticks .d-bad { background: var(--major); }
 .ticks .d-maint { background: var(--maint); }
+.ticks .has-maint { box-shadow: inset 0 5px 0 var(--maint); }
 .ticks i:hover { outline: 1px solid var(--ink); outline-offset: 1px; }
 /* tick tooltip, placed by tips.js */
 .tip {

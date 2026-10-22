@@ -47,6 +47,7 @@ const (
 type File struct {
 	Defaults  Defaults   `yaml:"defaults" json:"-"`
 	Notifiers []Notifier `yaml:"notifiers" json:"-"`
+	APITokens []APIToken `yaml:"api_tokens" json:"-"`
 	Admin     Admin      `yaml:"admin" json:"-"`
 	Footer    Footer     `yaml:"footer" json:"-"`
 	Pages     []Page     `yaml:"pages" json:"pages"`
@@ -92,6 +93,32 @@ func (n Notifier) URL() (string, error) {
 	u, err := url.Parse(v)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("notifier %s: %s is not an http or https URL", n.Key, n.URLEnv)
+	}
+	return v, nil
+}
+
+// MinTokenLength is the shortest API token accepted.
+const MinTokenLength = 32
+
+// APIToken lets a script write incidents through the admin API. The token
+// is a secret, so the file only names the environment variable that holds
+// it (NAME or NAME_FILE).
+type APIToken struct {
+	Key      string `yaml:"key"`
+	TokenEnv string `yaml:"token_env"`
+}
+
+// Token reads the token from the environment.
+func (t APIToken) Token() (string, error) {
+	v, err := lookup(t.TokenEnv)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case v == "":
+		return "", fmt.Errorf("api token %s: %s is not set", t.Key, t.TokenEnv)
+	case len(v) < MinTokenLength:
+		return "", fmt.Errorf("api token %s: %s is shorter than %d characters", t.Key, t.TokenEnv, MinTokenLength)
 	}
 	return v, nil
 }
@@ -442,6 +469,20 @@ func (f *File) validate() error {
 	}
 	if len(f.Pages) == 0 {
 		bad("pages", "at least one page is required")
+	}
+	tokenKeys := map[string]bool{}
+	for _, t := range f.APITokens {
+		tw := fmt.Sprintf("api_tokens[%s]", t.Key)
+		if !keyRe.MatchString(t.Key) {
+			bad(tw, "key must match %s", keyRe)
+		}
+		if tokenKeys[t.Key] {
+			bad(tw, "duplicate token key")
+		}
+		tokenKeys[t.Key] = true
+		if !envNameRe.MatchString(t.TokenEnv) {
+			bad(tw, "token_env must name an environment variable such as NOROSHI_API_TOKEN_OPS")
+		}
 	}
 	notifierKeys := map[string]bool{}
 	for _, n := range f.Notifiers {

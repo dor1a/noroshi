@@ -122,6 +122,7 @@ var messages = map[string]map[string]string{
 		"uptime.percent": "가용률 %s%%",
 		"uptime.nodata":  "데이터 없음",
 		"uptime.down":    "장애 %s",
+		"uptime.maint":   "점검 %s",
 		"uptime.ago":     "%d일 전",
 		"uptime.today":   "오늘",
 
@@ -277,6 +278,7 @@ var messages = map[string]map[string]string{
 		"uptime.percent": "%s%% uptime",
 		"uptime.nodata":  "No data",
 		"uptime.down":    "%s down",
+		"uptime.maint":   "%s maintenance",
 		"uptime.ago":     "%d days ago",
 		"uptime.today":   "Today",
 

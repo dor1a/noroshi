@@ -61,7 +61,7 @@ config:
 | `locale` | `en` | `en` or `ko`, used when neither `?lang=`, a cookie, nor the browser picks one. Also the language of names in metrics |
 | `theme`, `logLevel` | | `NOROSHI_THEME`, `NOROSHI_LOG_LEVEL` |
 | `secret.name` | | Required. Existing Secret with the keys below |
-| `secret.env` | database URL, OIDC client secret, session key | Variable name to Secret key. Each becomes `NAME_FILE` pointing at the mounted key. Add webhook variables named by `url_env`; set one to `null` to drop it |
+| `secret.env` | database URL, OIDC client secret, session key | Variable name to Secret key. Each becomes `NAME_FILE` pointing at the mounted key. Add webhook variables named by `url_env` and API token variables named by `token_env`; set one to `null` to drop it |
 | `extraEnv` | `[]` | More environment variables, for example `NOROSHI_DEV_NO_AUTH` |
 | `config` | one example page | The noroshi config file |
 | `existingConfigMap` | | Use a ConfigMap with a `config.yaml` key instead of `config` |

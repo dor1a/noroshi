@@ -80,8 +80,8 @@ func TestCompute(t *testing.T) {
 		if d.Up != 12*time.Hour-time.Nanosecond || d.Down != 0 || !near(d.Percent(), 100) {
 			t.Fatalf("up %s down %s", d.Up, d.Down)
 		}
-		if d.Worst != judge.Maintenance {
-			t.Fatalf("worst %s", d.Worst)
+		if d.Worst != judge.Maintenance || d.Maint != 12*time.Hour {
+			t.Fatalf("worst %s maint %s", d.Worst, d.Maint)
 		}
 	})
 

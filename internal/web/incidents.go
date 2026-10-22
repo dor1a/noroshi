@@ -278,27 +278,38 @@ func readIncidentForm(r *http.Request, locale string, comps []store.ComponentRow
 			}
 			statuses[c.ID] = judge.Status(v)
 		}
-		if !slices.Contains(store.Stages, f.Stage) {
-			bad("admin.err_stage")
-		}
 	}
-	if create {
-		switch {
-		case f.Title == "":
-			bad("admin.err_title")
-		case utf8.RuneCountInString(f.Title) > maxTitle:
-			bad("admin.err_title_long")
-		}
-	}
-	if key := checkBody(f.Body); key != "" {
+	for _, key := range incidentErrors(f.Stage, f.Title, f.Body, create, resolved) {
 		bad(key)
 	}
 	return f, statuses, raw
 }
 
-func postedBody(r *http.Request) string {
-	return strings.TrimSpace(strings.ReplaceAll(r.PostFormValue("body"), "\r\n", "\n"))
+// incidentErrors returns the message keys for an unusable stage, title, or
+// body. The stage is not checked on a resolved incident, and the title only
+// when creating one.
+func incidentErrors(stage, title, body string, create, resolved bool) []string {
+	var keys []string
+	if !resolved && !slices.Contains(store.Stages, stage) {
+		keys = append(keys, "admin.err_stage")
+	}
+	if create {
+		switch {
+		case title == "":
+			keys = append(keys, "admin.err_title")
+		case utf8.RuneCountInString(title) > maxTitle:
+			keys = append(keys, "admin.err_title_long")
+		}
+	}
+	if key := checkBody(body); key != "" {
+		keys = append(keys, key)
+	}
+	return keys
 }
+
+func postedBody(r *http.Request) string { return normBody(r.PostFormValue("body")) }
+
+func normBody(s string) string { return strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n")) }
 
 // checkBody returns the message key for an unusable body, or "".
 func checkBody(body string) string {
@@ -721,6 +732,19 @@ func (s *Server) handleUpdateDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
+// incidentURL is where people outside can read an incident: the admin
+// listener for a private page, the public one otherwise. It is empty when
+// that listener's base URL is not set.
+func (s *Server) incidentURL(pageKey string, id int64) string {
+	switch {
+	case s.private(pageKey) && s.env.AdminURL != "":
+		return s.env.AdminURL + incidentPath(pageKey, id)
+	case !s.private(pageKey) && s.env.BaseURL != "":
+		return s.env.BaseURL + incidentPath(pageKey, id)
+	}
+	return ""
+}
+
 // announce sends one update to the page's channels in the background and
 // records each result.
 func (s *Server) announce(ctx context.Context, incidentID, updateID int64) {
@@ -749,12 +773,7 @@ func (s *Server) announce(ctx context.Context, incidentID, updateID int64) {
 		}
 		m := notify.Message{
 			Page: in.PageTitle.Get(locale), Title: in.Title, Stage: upd.Stage, Body: upd.Body, At: upd.At,
-		}
-		switch {
-		case s.private(in.PageKey) && s.env.AdminURL != "":
-			m.URL = s.env.AdminURL + incidentPath(in.PageKey, in.ID)
-		case !s.private(in.PageKey) && s.env.BaseURL != "":
-			m.URL = s.env.BaseURL + incidentPath(in.PageKey, in.ID)
+			URL: s.incidentURL(in.PageKey, in.ID),
 		}
 		for _, c := range in.Components {
 			st := c.Status

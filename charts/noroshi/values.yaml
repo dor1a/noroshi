@@ -37,8 +37,9 @@ logLevel: info
 
 # Secrets are read from files (NAME_FILE). Name an existing Secret and map
 # each variable to a key in it; webhook variables named by notifiers'
-# url_env go here too. Helm merges maps, so set a variable to null to drop it
-# (the OIDC and session entries are not needed with NOROSHI_DEV_NO_AUTH).
+# url_env and token variables named by api_tokens' token_env go here too.
+# Helm merges maps, so set a variable to null to drop it (the OIDC and
+# session entries are not needed with NOROSHI_DEV_NO_AUTH).
 secret:
   name: ""
   env:

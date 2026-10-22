@@ -130,6 +130,14 @@ func serve() error {
 		}
 		targets = append(targets, notify.Target{Key: n.Key, Type: n.Type, URL: u, Locale: n.Locale})
 	}
+	apiTokens := map[string]string{}
+	for _, t := range file.APITokens {
+		v, err := t.Token()
+		if err != nil {
+			return err
+		}
+		apiTokens[t.Key] = v
+	}
 	// Pages often share one logo, so each source is read or fetched once.
 	type loaded struct {
 		logo *web.Logo
@@ -207,6 +215,7 @@ func serve() error {
 	srv.SetPages(pageMeta)
 	srv.SetAdmin(admin)
 	srv.SetFooter(file.Footer.ShowPoweredBy())
+	srv.SetAPITokens(apiTokens)
 	if env.DevNoAuth {
 		log.Warn("NOROSHI_DEV_NO_AUTH is set: the admin pages require no sign-in")
 	}

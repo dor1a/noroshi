@@ -169,6 +169,7 @@ The 90-day bars and percentages on the public page follow these rules.
 | Counts as up | `operational`, `degraded_performance` |
 | Left out | `under_maintenance`, no data |
 | No data | Grey bar, left out of the percentage, never counted as down |
+| Days with some maintenance | A day that is maintenance only takes the maintenance colour. A day that mixes maintenance with checked time keeps its percentage colour with a maintenance band at the top, and its tooltip gives the maintenance time |
 | Days | Cut in the page's `timezone` |
 
 ## Data model (draft)
@@ -222,6 +223,37 @@ Example alert rules ship in the repo (`deploy/prometheus/rules.yaml`, also loade
 - The language comes from `?lang=`, then the cookie, `Accept-Language`, and `NOROSHI_DEFAULT_LOCALE`.
 - Times show in the page's `timezone`.
 - The public page must read fine without JavaScript. HTMX only refreshes it.
+
+## Incident API (v0.3.0)
+
+Scripts and command-line tools write incidents with the same rules as the admin pages. Browsers keep using the pages; the API takes bearer tokens only.
+
+| Item | Draft |
+| -- | -- |
+| Listener | Admin only. The public listener keeps its read-only `/api/v1/pages/{key}` |
+| Tokens | Listed in YAML by name; the value comes from an environment variable or its `_FILE`, like notifier URLs. Compared in constant time. A missing value or one shorter than 32 characters stops startup |
+| Author | `api:<token key>` on every update the token writes |
+| Components | Named by their YAML key, not database IDs |
+| Announcements | `notify` per request, as on the pages |
+| Errors | JSON `{"error": "..."}` with 400, 401, 404, 409 (deleting the newest update), 422 |
+
+```yaml
+api_tokens:
+  - key: ops
+    token_env: NOROSHI_API_TOKEN_OPS
+```
+
+| Method | Path | Does |
+| -- | -- | -- |
+| GET | `/api/v1/admin/incidents` | Open incidents and those resolved in the last 30 days; `?page=` filters |
+| GET | `/api/v1/admin/incidents/{id}` | One incident with its timeline |
+| POST | `/api/v1/admin/incidents` | Create: page, title, stage, body, components, notify |
+| POST | `/api/v1/admin/incidents/{id}/updates` | Add an update: stage, body, components, notify. Stage and components left out keep the current ones |
+| PATCH | `/api/v1/admin/incidents/{id}/updates/{uid}` | Correct an update's body |
+| DELETE | `/api/v1/admin/incidents/{id}/updates/{uid}` | Delete an update other than the newest |
+| DELETE | `/api/v1/admin/incidents/{id}` | Delete an incident |
+
+Drafts created from Alertmanager webhooks stay in phase 3. They need an unpublished state and rules that map alerts to components.
 
 ## Phases
 

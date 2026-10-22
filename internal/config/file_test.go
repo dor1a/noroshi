@@ -233,6 +233,36 @@ pages:
 	}
 }
 
+func TestAPITokens(t *testing.T) {
+	base := "pages:\n  - key: home\n    title: x\n"
+	f, err := ParseFile([]byte("api_tokens:\n  - key: ops\n    token_env: NOROSHI_TEST_API_TOKEN\n" + base))
+	if err != nil || len(f.APITokens) != 1 || f.APITokens[0].Key != "ops" {
+		t.Fatalf("got %+v %v", f.APITokens, err)
+	}
+	for want, yaml := range map[string]string{
+		"duplicate token key": "api_tokens:\n  - key: ops\n    token_env: A\n  - key: ops\n    token_env: B\n",
+		"token_env must name": "api_tokens:\n  - key: ops\n    token_env: secret-value\n",
+	} {
+		if _, err := ParseFile([]byte(yaml + base)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("want %q, got %v", want, err)
+		}
+	}
+
+	tok := f.APITokens[0]
+	if _, err := tok.Token(); err == nil || !strings.Contains(err.Error(), "is not set") {
+		t.Fatalf("unset: %v", err)
+	}
+	t.Setenv("NOROSHI_TEST_API_TOKEN", "short")
+	if _, err := tok.Token(); err == nil || strings.Contains(err.Error(), "short\"") || !strings.Contains(err.Error(), "shorter than") {
+		t.Fatalf("short token must fail without echoing it: %v", err)
+	}
+	long := strings.Repeat("x", MinTokenLength)
+	t.Setenv("NOROSHI_TEST_API_TOKEN", long)
+	if v, err := tok.Token(); err != nil || v != long {
+		t.Fatalf("got %q %v", v, err)
+	}
+}
+
 func TestParseDuration(t *testing.T) {
 	for in, want := range map[string]time.Duration{
 		"30d": 30 * 24 * time.Hour,
