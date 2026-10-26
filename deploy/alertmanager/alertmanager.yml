@@ -16,16 +16,21 @@ route:
       group_by:
         - alertname
         - page
+        - component
+        - check
       group_wait: 10s
       group_interval: 1m
-    # Every other check: one message per page. A short group_interval keeps
-    # later failures and recoveries in the same page from waiting 5 minutes.
+    # Every other check: one message per check, because Discord colours a whole
+    # message red while anything in it is down. A short group_interval sends the
+    # recovery within a minute instead of five.
     - matchers:
         - alertname="NoroshiCheckDown"
       receiver: uptime
       group_by:
         - alertname
         - page
+        - component
+        - check
       group_wait: 10s
       group_interval: 1m
 

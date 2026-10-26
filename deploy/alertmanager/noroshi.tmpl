@@ -1,6 +1,7 @@
 {{/*
-  noroshi alert messages for Alertmanager, one message per status page
-  (group_by: alertname, page).
+  noroshi alert messages for Alertmanager, one message per check
+  (group_by: alertname, page, component, check). Grouping by page also works,
+  but Discord paints a message red while any check in it is down.
     Discord          title: noroshi.title        message: noroshi.message
     Microsoft Teams  title: noroshi.teams.title  text:    noroshi.teams.text
     Outside readers  title: noroshi.title        message: noroshi.public.message
