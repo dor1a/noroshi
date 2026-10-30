@@ -76,6 +76,7 @@ func apiAuthor(r *http.Request) string {
 
 type adminIncident struct {
 	ID         int64            `json:"id"`
+	Kind       string           `json:"kind"`
 	Page       string           `json:"page"`
 	Title      string           `json:"title"`
 	Stage      string           `json:"stage"`
@@ -111,7 +112,7 @@ type adminNotification struct {
 
 func (s *Server) adminIncidentJSON(in store.Incident) adminIncident {
 	out := adminIncident{
-		ID: in.ID, Page: in.PageKey, Title: in.Title, Stage: in.Stage, StartedAt: in.StartedAt,
+		ID: in.ID, Kind: in.Kind, Page: in.PageKey, Title: in.Title, Stage: in.Stage, StartedAt: in.StartedAt,
 		ResolvedAt: in.ResolvedAt, URL: s.incidentURL(in.PageKey, in.ID),
 		Components: []adminComponent{}, Updates: []adminUpdate{},
 	}
