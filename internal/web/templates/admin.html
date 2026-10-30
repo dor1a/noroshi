@@ -59,38 +59,87 @@
 {{template "head" .}}
 <main class="sheet wide">
   {{template "admin_top" .}}
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>{{t .Locale "admin.component"}}</th>
-          <th>{{t .Locale "admin.check"}}</th>
-          <th>{{t .Locale "admin.target"}}</th>
-          <th>{{t .Locale "admin.state"}}</th>
-          <th>{{t .Locale "admin.since"}}</th>
-          <th>{{t .Locale "admin.last_run"}}</th>
-          <th>{{t .Locale "admin.latency"}}</th>
-          <th>{{t .Locale "admin.detail"}}</th>
-          <th>{{t .Locale "admin.expiry"}}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .Rows}}
-        <tr>
-          <td{{if eq .StateKey "down"}} class="cell-down"{{end}}>{{.Component}}<span class="sub">{{.Page}} · {{.PageKey}}</span></td>
-          <td><a href="/admin/checks/{{.ID}}">{{.Key}}</a><span class="sub mono">{{.Type}}</span></td>
-          <td class="target">{{breakable .Target}}</td>
-          <td>{{template "admin_state" .}}<span class="sub">{{.Streak}}</span></td>
-          <td class="num">{{.Since}}</td>
-          <td class="num">{{.LastRun}}</td>
-          <td class="num{{with .LatencyClass}} {{.}}{{end}}"{{with .LatencyTip}} title="{{.}}"{{end}}>{{.Latency}}</td>
-          <td class="{{.ResultClass}}">{{.Result}}</td>
-          <td class="{{.ExpiryClass}}">{{.Expiry}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
+  <section class="admin-page">
+    <h2 class="section-title">{{t .Locale "admin.recent_outages"}}</h2>
+    {{if .Recent}}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>{{t .Locale "admin.page"}}</th>
+            <th>{{t .Locale "admin.component"}}</th>
+            <th>{{t .Locale "admin.state"}}</th>
+            <th>{{t .Locale "admin.outage_start"}}</th>
+            <th>{{t .Locale "admin.fail_end"}}</th>
+            <th>{{t .Locale "admin.duration"}}</th>
+            <th>{{t .Locale "admin.cause"}}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Recent}}
+          <tr>
+            <td>{{.Page}}</td>
+            <td class="cell-down">{{.Component}}</td>
+            <td class="s-{{.StatusKey}}">{{.Status}}</td>
+            <td class="num">{{.Start}}</td>
+            <td class="num">{{if .Ongoing}}<span class="t-bad">{{t $.Locale "admin.failing"}}</span>{{else}}{{.End}}{{end}}</td>
+            <td class="num">{{.Duration}}</td>
+            <td>{{if .CauseURL}}<a href="{{.CauseURL}}">{{.Cause}}</a>{{else}}-{{end}}</td>
+            <td><a class="button small" href="{{.RecordURL}}">{{t $.Locale "admin.record_incident"}}</a></td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <p class="notice">{{t .Locale "admin.no_recent_outages"}}</p>
+    {{end}}
+  </section>
+  {{range .Sections}}
+  <section class="admin-page">
+    <h2 class="section-title page-head">
+      <span class="page-name">{{.Title}}</span>
+      <span class="tag">{{if .Private}}{{t $.Locale "page.private"}}{{else}}{{t $.Locale "page.public"}}{{end}}</span>
+      {{if .Down}}<span class="t-bad">{{tf $.Locale "admin.down_count" .Down}}</span>{{end}}
+      <a class="page-link" href="/p/{{.Key}}" title="{{t $.Locale "admin.open_page"}}">/p/{{.Key}} ↗</a>
+    </h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>{{t $.Locale "admin.component"}}</th>
+            <th>{{t $.Locale "admin.check"}}</th>
+            <th>{{t $.Locale "admin.target"}}</th>
+            <th>{{t $.Locale "admin.state"}}</th>
+            <th>{{t $.Locale "admin.since"}}</th>
+            <th>{{t $.Locale "admin.last_run"}}</th>
+            <th>{{t $.Locale "admin.latency"}}</th>
+            <th>{{t $.Locale "admin.detail"}}</th>
+            <th>{{t $.Locale "admin.expiry"}}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Components}}{{$c := .}}
+          {{range $i, $r := .Rows}}
+          <tr>
+            {{if not $i}}<td rowspan="{{len $c.Rows}}" class="comp-cell{{if $c.Down}} cell-down{{end}}">{{$c.Name}}</td>{{end}}
+            <td><a href="/admin/checks/{{.ID}}">{{.TypeLabel}}</a><span class="sub mono">{{.Key}}</span></td>
+            <td class="target">{{breakable .Target}}</td>
+            <td>{{template "admin_state" .}}<span class="sub">{{.Streak}}</span></td>
+            <td class="num">{{.Since}}</td>
+            <td class="num">{{.LastRun}}</td>
+            <td class="num{{with .LatencyClass}} {{.}}{{end}}"{{with .LatencyTip}} title="{{.}}"{{end}}>{{.Latency}}</td>
+            <td class="{{.ResultClass}}">{{.Result}}</td>
+            <td class="{{.ExpiryClass}}">{{.Expiry}}</td>
+          </tr>
+          {{end}}
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
   {{template "colophon" .}}
 </main>
 {{template "foot" .}}
@@ -104,7 +153,7 @@
   <dl class="meta">
     <dt>{{t .Locale "admin.page"}}</dt><dd>{{.Row.Page}}</dd>
     <dt>{{t .Locale "admin.component"}}</dt><dd>{{.Row.Component}}</dd>
-    <dt>{{t .Locale "admin.check"}}</dt><dd class="mono">{{.Row.Key}} ({{.Row.Type}})</dd>
+    <dt>{{t .Locale "admin.check"}}</dt><dd>{{.Row.TypeLabel}} <span class="mono t-muted">{{.Row.Key}}</span></dd>
     <dt>{{t .Locale "admin.target"}}</dt><dd class="mono">{{breakable .Row.Target}}</dd>
     <dt>{{t .Locale "admin.interval"}}</dt><dd class="mono">{{.Interval}}</dd>
     <dt>{{t .Locale "admin.timeout"}}</dt><dd class="mono">{{.Timeout}}</dd>
@@ -114,7 +163,57 @@
     <dt>{{t .Locale "admin.since"}}</dt><dd class="mono">{{.Row.Since}}</dd>
     <dt>{{t .Locale "admin.expiry"}}</dt><dd class="{{.Row.ExpiryClass}}">{{.Row.Expiry}}</dd>
   </dl>
-  <h2 class="section-title">{{t .Locale "admin.recent"}}</h2>
+  <form class="range-bar" method="get">
+    <span class="label">{{t .Locale "admin.range"}}</span>
+    <span class="presets">{{range .Presets}}<a class="chip{{if .Active}} active{{end}}" href="{{.Href}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}</a>{{end}}</span>
+    <span class="custom">
+      <input type="datetime-local" name="from" value="{{.From}}" min="{{.Min}}" max="{{.Max}}" aria-label="{{t .Locale "admin.range_from"}}">
+      <span aria-hidden="true">–</span>
+      <input type="datetime-local" name="to" value="{{.To}}" min="{{.Min}}" max="{{.Max}}" aria-label="{{t .Locale "admin.range_to"}}">
+    </span>
+    <label class="choice"><input type="checkbox" name="failed" value="1"{{if .FailedOnly}} checked{{end}}> {{t .Locale "admin.failed_only"}}</label>
+    <button type="submit" class="button">{{t .Locale "admin.show"}}</button>
+  </form>
+  {{if .RangeBad}}<p class="notice bad">{{t .Locale "admin.err_range"}}</p>{{end}}
+  {{with .Chart}}
+  <h2 class="section-title">{{tf $.Locale "admin.latency_title" $.Range}}</h2>
+  <div class="lat-wrap">{{.}}</div>
+  <p class="hint">{{t $.Locale "admin.lat_legend"}}</p>
+  {{end}}
+  <h2 class="section-title">{{tf .Locale "admin.failures" .Range}}</h2>
+  {{if .Failures}}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>{{t .Locale "admin.fail_start"}}</th>
+          <th>{{t .Locale "admin.fail_end"}}</th>
+          <th>{{t .Locale "admin.duration"}}</th>
+          <th>{{t .Locale "admin.fail_count"}}</th>
+          <th>{{t .Locale "admin.state"}}</th>
+          <th>{{t .Locale "admin.detail"}}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Failures}}
+        <tr>
+          <td class="num">{{.Start}}</td>
+          <td class="num">{{if .Ongoing}}<span class="t-bad">{{t $.Locale "admin.failing"}}</span>{{else}}{{.End}}{{end}}</td>
+          <td class="num">{{.Duration}}</td>
+          <td class="num">{{.Count}}</td>
+          <td>{{if .Judged}}<span class="cs cs-down"><span class="cs-icon" aria-hidden="true">{{stateIcon "down"}}</span>{{t $.Locale "admin.judged"}}</span>{{else}}<span class="t-muted">{{t $.Locale "admin.blip"}}</span>{{end}}</td>
+          <td class="t-bad">{{.Detail}}</td>
+          <td>{{with .RecordURL}}<a class="button small" href="{{.}}">{{t $.Locale "admin.record_incident"}}</a>{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <p class="notice">{{t .Locale "admin.no_failures"}}</p>
+  {{end}}
+  <h2 class="section-title">{{tf .Locale "admin.results" .Range}}{{if gt .Total (len .Results)}} <span class="t-muted">{{tf .Locale "admin.truncated" .Total (len .Results)}}</span>{{end}}</h2>
   {{if .Results}}
   <div class="table-wrap">
     <table>
@@ -139,7 +238,7 @@
     </table>
   </div>
   {{else}}
-  <p class="notice">{{t .Locale "admin.no_results"}}</p>
+  <p class="notice">{{t .Locale "admin.no_results_range"}}</p>
   {{end}}
   {{template "colophon" .}}
 </main>
@@ -198,20 +297,39 @@
   {{range .Form.Errors}}<p class="notice bad">{{.}}</p>{{end}}
   {{if .Create}}
   <input type="hidden" name="page" value="{{.PageKey}}">
+  {{if .Maintenance}}<input type="hidden" name="kind" value="maintenance">{{end}}
   <label class="field">
     <span class="label">{{t .Locale "admin.incident_title"}}</span>
     <input type="text" name="title" value="{{.Form.Title}}" maxlength="200" required>
   </label>
   {{end}}
+  {{if .Maintenance}}
+  <fieldset class="field">
+    <legend class="label">{{t .Locale "admin.maint_times"}}</legend>
+    <p class="hint">{{tf .Locale "admin.maint_tip" .TimeZone}}</p>
+    <div class="backfill-times">
+      <label class="field">
+        <span class="label">{{t .Locale "admin.maint_start"}}</span>
+        <input type="datetime-local" name="started_at" value="{{.Form.StartedAt}}" required>
+      </label>
+      <label class="field">
+        <span class="label">{{t .Locale "admin.maint_end"}}</span>
+        <input type="datetime-local" name="resolved_at" value="{{.Form.ResolvedAt}}" required>
+      </label>
+    </div>
+  </fieldset>
+  {{end}}
   {{if .Resolved}}
   <p class="notice">{{t .Locale "admin.incident_resolved_note"}}</p>
   {{else}}
+  {{if not .Maintenance}}
   <fieldset class="field">
     <legend class="label">{{t .Locale "admin.incident_stage"}}</legend>
     <div class="choices">
       {{range .Stages}}<label class="choice"><input type="radio" name="stage" value="{{.Key}}"{{if eq .Key $.Form.Stage}} checked{{end}}> {{.Label}}</label>{{end}}
     </div>
   </fieldset>
+  {{end}}
   {{if .Components}}
   <fieldset class="field">
     <legend class="label">{{t .Locale "admin.incident_components"}}</legend>
@@ -232,6 +350,22 @@
     </div>
   </fieldset>
   {{end}}
+  {{if and .Create (not .Maintenance)}}
+  <details class="field backfill"{{if or .Form.StartedAt .Form.ResolvedAt}} open{{end}}>
+    <summary class="label">{{t .Locale "admin.backfill"}}</summary>
+    <p class="hint">{{tf .Locale "admin.backfill_tip" .TimeZone}}</p>
+    <div class="backfill-times">
+      <label class="field">
+        <span class="label">{{t .Locale "admin.started_at"}}</span>
+        <input type="datetime-local" name="started_at" value="{{.Form.StartedAt}}">
+      </label>
+      <label class="field">
+        <span class="label">{{t .Locale "admin.resolved_at"}}</span>
+        <input type="datetime-local" name="resolved_at" value="{{.Form.ResolvedAt}}">
+      </label>
+    </div>
+  </details>
+  {{end}}
   {{end}}
   <label class="field">
     <span class="label">{{t .Locale "admin.incident_body"}}</span>
@@ -251,7 +385,7 @@
 <main class="sheet wide">
   {{template "admin_top" .}}
   <p class="back"><a href="/admin/incidents">{{t .Locale "admin.incident_back"}}</a></p>
-  <h2 class="section-title">{{tf .Locale "admin.incident_new_for" .PageTitle}}</h2>
+  <h2 class="section-title">{{if .FormView.Maintenance}}{{tf .Locale "admin.maint_new_for" .PageTitle}}{{else}}{{tf .Locale "admin.incident_new_for" .PageTitle}}{{end}}</h2>
   {{template "incident_form" .FormView}}
   {{template "colophon" .}}
 </main>
@@ -268,6 +402,50 @@
     <section class="split-side">
       <h2 class="section-title">{{t .Locale "admin.incident_add_update"}}</h2>
       {{template "incident_form" .FormView}}
+      <details class="edit"{{if .Edit.Show}} open{{end}}>
+        <summary>{{t .Locale "admin.incident_edit"}}</summary>
+        <form method="post" action="{{.Edit.Action}}" class="form">
+          {{range .Edit.Errors}}<p class="notice bad">{{.}}</p>{{end}}
+          <label class="field">
+            <span class="label">{{t .Locale "admin.incident_title"}}</span>
+            <input type="text" name="title" value="{{.Edit.Title}}" maxlength="200" required>
+          </label>
+          <p class="hint">{{tf .Locale "admin.edit_tip" .Edit.TimeZone}}</p>
+          <div class="backfill-times">
+            <label class="field">
+              <span class="label">{{t .Locale "admin.started_at"}}</span>
+              <input type="datetime-local" name="started_at" value="{{.Edit.StartedAt}}">
+            </label>
+            {{if not .Edit.Open}}
+            <label class="field">
+              <span class="label">{{t .Locale "admin.resolved_at"}}</span>
+              <input type="datetime-local" name="resolved_at" value="{{.Edit.ResolvedAt}}">
+            </label>
+            {{end}}
+          </div>
+          {{if and (not .Edit.Open) .Edit.Components}}
+          <fieldset class="field">
+            <legend class="label">{{t .Locale "admin.incident_components"}}</legend>
+            <p class="hint">{{t .Locale "admin.edit_components_tip"}}</p>
+            <div class="comp-grid">
+              {{range .Edit.Components}}
+              <label class="comp">
+                <span class="comp-name">{{.Name}}<span class="sub">{{.Group}}</span></span>
+                <select name="c{{.ID}}">
+                  <option value="">{{t $.Locale "admin.incident_unaffected"}}</option>
+                  {{- $cur := .Current}}
+                  {{- range $.Edit.Statuses}}
+                  <option value="{{.Key}}"{{if eq .Key $cur}} selected{{end}}>{{.Glyph}} {{.Label}}</option>
+                  {{- end}}
+                </select>
+              </label>
+              {{end}}
+            </div>
+          </fieldset>
+          {{end}}
+          <div><button type="submit" class="button">{{t .Locale "admin.incident_save"}}</button></div>
+        </form>
+      </details>
       <details class="danger">
         <summary>{{t .Locale "admin.incident_delete"}}</summary>
         <form method="post" action="/admin/incidents/{{.Inc.ID}}/delete" class="form">

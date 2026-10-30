@@ -67,6 +67,8 @@ type incidentView struct {
 	Open       bool
 	Started    time.Time
 	Resolved   *time.Time
+	Window     string // a maintenance's planned window
+	Complete   bool   // a maintenance in progress that can end early
 	Affected   []affectedView
 	Updates    []updateView
 	Admin      bool // shows authors and delivery results
@@ -77,6 +79,15 @@ type incidentView struct {
 // incidentTone picks the box colour: the worst declared status while open,
 // "info" for an open incident that names no component, "resolved" after.
 func incidentTone(in store.Incident) string {
+	if in.Maintenance() {
+		switch in.Phase(time.Now()) {
+		case store.PhaseUpcoming:
+			return "info"
+		case store.PhaseActive:
+			return string(judge.Maintenance)
+		}
+		return "resolved"
+	}
 	if !in.Open() {
 		return "resolved"
 	}
@@ -95,6 +106,16 @@ func (s *Server) incidentView(in store.Incident, locale string, loc *time.Locati
 	if !admin {
 		v.URL = incidentPath(in.PageKey, in.ID)
 	}
+	now := time.Now()
+	if in.Maintenance() {
+		v.StageKey = maintStage(in, now)
+		v.StageLabel = i18n.T(locale, "incident.stage."+v.StageKey)
+		v.Open = in.Active(now)
+		v.Complete = admin && v.Open
+		if in.ResolvedAt != nil {
+			v.Window = fmtWindowRange(in.StartedAt, *in.ResolvedAt, loc)
+		}
+	}
 	for _, c := range in.Components {
 		v.Affected = append(v.Affected, affectedView{Name: c.Name.Get(locale), Status: c.Status})
 	}
@@ -102,6 +123,11 @@ func (s *Server) incidentView(in store.Incident, locale string, loc *time.Locati
 		uv := updateView{
 			ID: u.ID, StageKey: u.Stage, StageLabel: i18n.T(locale, "incident.stage."+u.Stage),
 			Body: u.Body, At: u.At, Latest: i == 0,
+		}
+		if in.Maintenance() {
+			// An update reads as the phase the maintenance was in when it was written.
+			uv.StageKey = maintStage(in, u.At)
+			uv.StageLabel = i18n.T(locale, "incident.stage."+uv.StageKey)
 		}
 		if admin {
 			uv.Author = u.Author
@@ -155,10 +181,7 @@ func (s *Server) handlePublicIncident(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	loc, err := time.LoadLocation(p.Timezone)
-	if err != nil {
-		loc = time.UTC
-	}
+	loc := pageLocation(*p)
 	iv := s.incidentView(*in, locale, loc, false)
 	home := "/"
 	if len(all) > 1 || isAdminView(r) {
@@ -222,6 +245,9 @@ type incidentForm struct {
 	Body   string
 	Notify bool
 	Errors []string
+	// datetime-local values in the page's time zone, for a new incident
+	// recorded after the fact
+	StartedAt, ResolvedAt string
 }
 
 type formView struct {
@@ -236,6 +262,8 @@ type formView struct {
 	Components  []compChoice
 	NotifyNames string
 	Submit      string
+	TimeZone    string
+	Maintenance bool
 }
 
 func (s *Server) formView(locale, pageKey string, comps []store.ComponentRow, current map[int64]string) formView {
@@ -258,10 +286,12 @@ func (s *Server) formView(locale, pageKey string, comps []store.ComponentRow, cu
 // component choices so the form can be shown again as it was.
 func readIncidentForm(r *http.Request, locale string, comps []store.ComponentRow, create, resolved bool) (f incidentForm, statuses map[int64]judge.Status, raw map[int64]string) {
 	f = incidentForm{
-		Title:  strings.TrimSpace(r.PostFormValue("title")),
-		Stage:  r.PostFormValue("stage"),
-		Body:   postedBody(r),
-		Notify: r.PostFormValue("notify") == "1",
+		Title:      strings.TrimSpace(r.PostFormValue("title")),
+		Stage:      r.PostFormValue("stage"),
+		Body:       postedBody(r),
+		Notify:     r.PostFormValue("notify") == "1",
+		StartedAt:  strings.TrimSpace(r.PostFormValue("started_at")),
+		ResolvedAt: strings.TrimSpace(r.PostFormValue("resolved_at")),
 	}
 	bad := func(key string) { f.Errors = append(f.Errors, i18n.T(locale, key)) }
 	statuses, raw = map[int64]judge.Status{}, map[int64]string{}
@@ -279,7 +309,9 @@ func readIncidentForm(r *http.Request, locale string, comps []store.ComponentRow
 			statuses[c.ID] = judge.Status(v)
 		}
 	}
-	for _, key := range incidentErrors(f.Stage, f.Title, f.Body, create, resolved) {
+	// A maintenance has no stage to pick; its window decides what it shows.
+	maint := r.PostFormValue("kind") == store.KindMaintenance
+	for _, key := range incidentErrors(f.Stage, f.Title, f.Body, create, resolved || maint) {
 		bad(key)
 	}
 	return f, statuses, raw
@@ -305,6 +337,113 @@ func incidentErrors(stage, title, body string, create, resolved bool) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+// pageLocation is the page's time zone, UTC if it does not load.
+func pageLocation(p store.PageRow) *time.Location {
+	loc, err := time.LoadLocation(p.Timezone)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+// parseLocal reads a datetime-local form value in loc; empty is nil.
+func parseLocal(v string, loc *time.Location) (*time.Time, error) {
+	if v == "" {
+		return nil, nil
+	}
+	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05"} {
+		if t, err := time.ParseInLocation(layout, v, loc); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, fmt.Errorf("bad time %q", v)
+}
+
+// maintStage is the stage a maintenance shows at t: maint_upcoming,
+// maint_active, or maint_done.
+func maintStage(in store.Incident, t time.Time) string { return "maint_" + in.Phase(t) }
+
+// fmtWindowRange prints a maintenance window, the end without its date when
+// it falls on the same day: "2026-10-31 02:00 KST – 04:00".
+func fmtWindowRange(start, end time.Time, loc *time.Location) string {
+	s, e := start.In(loc), end.In(loc)
+	if s.Format("2006-01-02") == e.Format("2006-01-02") {
+		return fmtTime(start, loc) + " – " + e.Format("15:04")
+	}
+	return fmtTime(start, loc) + " – " + fmtTime(end, loc)
+}
+
+// maintenanceErrors checks a new maintenance's window: both ends given, the
+// end after the start and not already past.
+func maintenanceErrors(start, end *time.Time, now time.Time) []string {
+	switch {
+	case start == nil || end == nil:
+		return []string{"admin.err_maint_times"}
+	case !end.After(*start):
+		return []string{"admin.err_resolved_order"}
+	case !end.After(now):
+		return []string{"admin.err_maint_over"}
+	}
+	return nil
+}
+
+// maintenanceStatuses puts every chosen component under maintenance, which
+// is the only status a maintenance declares.
+func maintenanceStatuses(in map[int64]judge.Status) map[int64]judge.Status {
+	out := make(map[int64]judge.Status, len(in))
+	for id := range in {
+		out[id] = judge.Maintenance
+	}
+	return out
+}
+
+// clockSkew is how far ahead of the server a start or resolve time may be.
+const clockSkew = time.Minute
+
+// backfillErrors checks the optional times of a new incident recorded after
+// the fact. A resolve time needs the resolved stage, neither time may be in
+// the future, and the incident must start before it is resolved.
+func backfillErrors(stage string, started, resolved *time.Time, now time.Time) []string {
+	var keys []string
+	if started != nil && started.After(now.Add(clockSkew)) {
+		keys = append(keys, "admin.err_started_future")
+	}
+	if resolved != nil {
+		switch {
+		case stage != store.StageResolved:
+			keys = append(keys, "admin.err_resolved_stage")
+		case resolved.After(now.Add(clockSkew)):
+			keys = append(keys, "admin.err_resolved_future")
+		case started != nil && !resolved.After(*started):
+			keys = append(keys, "admin.err_resolved_order")
+		}
+	}
+	return keys
+}
+
+// newIncident builds the store input for a new incident, moving its start
+// and first update to the given times when it is recorded after the fact.
+func newIncident(stage, body, by string, statuses map[int64]judge.Status, started, resolved *time.Time, now time.Time) store.IncidentInput {
+	in := store.IncidentInput{Stage: stage, Body: body, Author: by, At: now, Components: statuses}
+	if resolved != nil {
+		in.At = *resolved
+	}
+	if started != nil {
+		in.Since = *started
+	}
+	return in
+}
+
+// newMaintenance builds the store input for a maintenance planned for
+// [start, end): written now, its chosen components under maintenance for
+// the window.
+func newMaintenance(body, by string, statuses map[int64]judge.Status, start, end, now time.Time) store.IncidentInput {
+	return store.IncidentInput{
+		Kind: store.KindMaintenance, Stage: store.StageScheduled, Body: body, Author: by, At: now,
+		Components: maintenanceStatuses(statuses), Since: start, Until: &end,
+	}
 }
 
 func postedBody(r *http.Request) string { return normBody(r.PostFormValue("body")) }
@@ -379,7 +518,13 @@ func (s *Server) handleIncidents(w http.ResponseWriter, r *http.Request) {
 			label = fmt.Sprintf(i18n.T(base.Locale, "admin.incident_new_for"), p.Title.Get(base.Locale))
 		}
 		view.New = append(view.New, newLink{Href: "/admin/incidents/new?page=" + p.Key, Label: label})
+		mlabel := i18n.T(base.Locale, "admin.maint_new")
+		if len(pages) > 1 {
+			mlabel = fmt.Sprintf(i18n.T(base.Locale, "admin.maint_new_for"), p.Title.Get(base.Locale))
+		}
+		view.New = append(view.New, newLink{Href: "/admin/incidents/new?kind=maintenance&page=" + p.Key, Label: mlabel})
 	}
+	now := time.Now()
 	for _, in := range list {
 		row := incidentRow{
 			ID: in.ID, Title: in.Title, Page: in.PageTitle.Get(base.Locale), StageKey: in.Stage,
@@ -393,9 +538,16 @@ func (s *Server) handleIncidents(w http.ResponseWriter, r *http.Request) {
 		row.Affected = strings.Join(names, ", ")
 		if in.ResolvedAt != nil {
 			row.Resolved = in.ResolvedAt.Local().Format("2006-01-02 15:04")
-			view.Recent = append(view.Recent, row)
-		} else {
+		}
+		if in.Maintenance() {
+			row.StageKey = maintStage(in, now)
+			row.StageLabel = i18n.T(base.Locale, "incident.stage."+row.StageKey)
+		}
+		// Upcoming and running maintenance sit with the open incidents.
+		if in.Active(now) || in.Maintenance() && in.Phase(now) == store.PhaseUpcoming {
 			view.Open = append(view.Open, row)
+		} else {
+			view.Recent = append(view.Recent, row)
 		}
 	}
 	s.render(w, http.StatusOK, "admin_incidents", view)
@@ -416,7 +568,13 @@ func (s *Server) pageByKey(ctx context.Context, key string) (*store.PageRow, err
 
 func (s *Server) renderNew(w http.ResponseWriter, status int, base adminBase, p *store.PageRow, fv formView) {
 	fv.Action, fv.Create, fv.Submit = "/admin/incidents", true, i18n.T(base.Locale, "admin.incident_create")
-	base.DocTitle = docTitle(base.Brand, i18n.T(base.Locale, "admin.incident_new"))
+	fv.TimeZone = p.Timezone
+	heading := "admin.incident_new"
+	if fv.Maintenance {
+		fv.Submit, heading = i18n.T(base.Locale, "admin.maint_create"), "admin.maint_new"
+		fv.Statuses = []statusChoice{{Key: string(judge.Maintenance), Label: i18n.T(base.Locale, "status."+string(judge.Maintenance)), Glyph: judge.Maintenance.Glyph()}}
+	}
+	base.DocTitle = docTitle(base.Brand, i18n.T(base.Locale, heading))
 	s.render(w, status, "admin_incident_new", struct {
 		adminBase
 		PageTitle string
@@ -456,8 +614,34 @@ func (s *Server) handleIncidentNew(w http.ResponseWriter, r *http.Request) {
 			current[c.ID] = string(c.Status)
 		}
 	}
+	form := incidentForm{Stage: store.StageInvestigating, Notify: true}
+	q := r.URL.Query()
+	if q.Get("kind") == store.KindMaintenance {
+		fv := s.formView(base.Locale, p.Key, comps, map[int64]string{})
+		fv.Form, fv.Maintenance = form, true
+		s.renderNew(w, http.StatusOK, base, p, fv)
+		return
+	}
+	// A link from an outage on the admin pages fills the form with it. A past
+	// one opens resolved and unannounced.
+	if key := q.Get("component"); key != "" {
+		st := judge.Status(q.Get("status"))
+		if !slices.Contains(declarable, st) || st == judge.Operational {
+			st = judge.Major
+		}
+		for _, c := range comps {
+			if c.Key == key {
+				current = map[int64]string{c.ID: string(st)}
+				form.Title = fmt.Sprintf(i18n.T(base.Locale, "admin.prefill_title"), c.Name.Get(base.Locale))
+			}
+		}
+	}
+	form.StartedAt = q.Get("started_at")
+	if v := q.Get("resolved_at"); v != "" {
+		form.ResolvedAt, form.Stage, form.Notify = v, store.StageResolved, false
+	}
 	fv := s.formView(base.Locale, p.Key, comps, current)
-	fv.Form = incidentForm{Stage: store.StageInvestigating, Notify: true}
+	fv.Form = form
 	s.renderNew(w, http.StatusOK, base, p, fv)
 }
 
@@ -486,15 +670,33 @@ func (s *Server) handleIncidentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	form, statuses, raw := readIncidentForm(r, base.Locale, comps, true, false)
+	maint := r.PostFormValue("kind") == store.KindMaintenance
+	now := time.Now()
+	started, errStart := parseLocal(form.StartedAt, pageLocation(*p))
+	resolved, errResolve := parseLocal(form.ResolvedAt, pageLocation(*p))
+	var keys []string
+	switch {
+	case errStart != nil || errResolve != nil:
+		keys = []string{"admin.err_time"}
+	case maint:
+		keys = maintenanceErrors(started, resolved, now)
+	default:
+		keys = backfillErrors(form.Stage, started, resolved, now)
+	}
+	for _, key := range keys {
+		form.Errors = append(form.Errors, i18n.T(base.Locale, key))
+	}
 	if len(form.Errors) > 0 {
 		fv := s.formView(base.Locale, p.Key, comps, raw)
-		fv.Form = form
+		fv.Form, fv.Maintenance = form, maint
 		s.renderNew(w, http.StatusUnprocessableEntity, base, p, fv)
 		return
 	}
-	id, updateID, err := s.store.CreateIncident(r.Context(), p.ID, form.Title, store.IncidentInput{
-		Stage: form.Stage, Body: form.Body, Author: author(r), At: time.Now(), Components: statuses,
-	})
+	in := newIncident(form.Stage, form.Body, author(r), statuses, started, resolved, now)
+	if maint {
+		in = newMaintenance(form.Body, author(r), statuses, *started, *resolved, now)
+	}
+	id, updateID, err := s.store.CreateIncident(r.Context(), p.ID, form.Title, in)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -525,7 +727,7 @@ func (s *Server) loadIncident(w http.ResponseWriter, r *http.Request, locale str
 	return in
 }
 
-func (s *Server) renderIncident(w http.ResponseWriter, status int, base adminBase, in *store.Incident, fv formView) {
+func (s *Server) renderIncident(w http.ResponseWriter, status int, base adminBase, in *store.Incident, fv formView, ev editView) {
 	base.DocTitle = docTitle(base.Brand, in.Title)
 	fv.Action = fmt.Sprintf("/admin/incidents/%d/updates", in.ID)
 	fv.Resolved = !in.Open()
@@ -544,8 +746,210 @@ func (s *Server) renderIncident(w http.ResponseWriter, status int, base adminBas
 		adminBase
 		Inc       incidentView
 		FormView  formView
+		Edit      editView
 		PublicURL string
-	}{base, s.incidentView(*in, base.Locale, time.Local, true), fv, public})
+	}{base, s.incidentView(*in, base.Locale, time.Local, true), fv, ev, public})
+}
+
+// editView is the form that corrects an incident's record.
+type editView struct {
+	Action     string
+	Open       bool
+	Title      string
+	StartedAt  string
+	ResolvedAt string
+	TimeZone   string
+	Statuses   []statusChoice
+	Components []compChoice
+	Errors     []string
+	Show       bool // open after a failed save
+}
+
+// editView fills the correction form from the incident, with times in the
+// page's time zone like the new incident form.
+func (s *Server) editView(ctx context.Context, locale string, in *store.Incident, comps []store.ComponentRow) (editView, *time.Location, error) {
+	p, err := s.pageByKey(ctx, in.PageKey)
+	if err != nil {
+		return editView{}, nil, err
+	}
+	loc, tz := time.UTC, "UTC"
+	if p != nil {
+		loc, tz = pageLocation(*p), p.Timezone
+	}
+	ev := editView{
+		Action: fmt.Sprintf("/admin/incidents/%d/edit", in.ID), Open: in.Open(), Title: in.Title,
+		StartedAt: in.StartedAt.In(loc).Format(localInput), TimeZone: tz,
+	}
+	if in.ResolvedAt != nil {
+		ev.ResolvedAt = in.ResolvedAt.In(loc).Format(localInput)
+	}
+	cur := map[int64]string{}
+	for _, c := range in.Components {
+		cur[c.ComponentID] = string(c.Status)
+	}
+	for _, st := range declarable {
+		ev.Statuses = append(ev.Statuses, statusChoice{Key: string(st), Label: i18n.T(locale, "status."+string(st)), Glyph: st.Glyph()})
+	}
+	for _, c := range comps {
+		ev.Components = append(ev.Components, compChoice{ID: c.ID, Name: c.Name.Get(locale), Group: c.GroupName.Get(locale), Current: cur[c.ID]})
+	}
+	return ev, loc, nil
+}
+
+// editErrors checks a correction: a usable title, no time in the future,
+// a resolved incident that does not end before it starts, and no resolve
+// time or components on an open incident, which change with an update.
+func editErrors(in *store.Incident, e store.IncidentEdit, now time.Time) []string {
+	var keys []string
+	if e.Title != nil {
+		switch {
+		case *e.Title == "":
+			keys = append(keys, "admin.err_title")
+		case utf8.RuneCountInString(*e.Title) > maxTitle:
+			keys = append(keys, "admin.err_title_long")
+		}
+	}
+	// A maintenance is planned, so its window may lie ahead.
+	if e.StartedAt != nil && e.StartedAt.After(now.Add(clockSkew)) && !in.Maintenance() {
+		keys = append(keys, "admin.err_started_future")
+	}
+	if in.Open() {
+		if e.ResolvedAt != nil || e.Components != nil {
+			keys = append(keys, "admin.err_edit_open")
+		}
+		return keys
+	}
+	if e.ResolvedAt != nil && e.ResolvedAt.After(now.Add(clockSkew)) && !in.Maintenance() {
+		keys = append(keys, "admin.err_resolved_future")
+	}
+	start, end := in.StartedAt, *in.ResolvedAt
+	if e.StartedAt != nil {
+		start = *e.StartedAt
+	}
+	if e.ResolvedAt != nil {
+		end = *e.ResolvedAt
+	}
+	if end.Before(start) {
+		keys = append(keys, "admin.err_resolved_order")
+	}
+	return keys
+}
+
+// readEditForm turns the posted correction into an edit, leaving out what
+// did not change: a time still shows as the form printed it, so seconds
+// the form cannot show are not lost by saving the title alone.
+func readEditForm(r *http.Request, in *store.Incident, ev editView, loc *time.Location) (e store.IncidentEdit, bad bool) {
+	if title := strings.TrimSpace(r.PostFormValue("title")); title != in.Title {
+		e.Title = &title
+	}
+	for _, f := range []struct {
+		name, was string
+		dst       **time.Time
+	}{{"started_at", ev.StartedAt, &e.StartedAt}, {"resolved_at", ev.ResolvedAt, &e.ResolvedAt}} {
+		v := strings.TrimSpace(r.PostFormValue(f.name))
+		if v == "" || v == f.was {
+			continue
+		}
+		t, err := parseLocal(v, loc)
+		if err != nil {
+			bad = true
+			continue
+		}
+		*f.dst = t
+	}
+	if in.Open() {
+		return e, bad
+	}
+	chosen, same := map[int64]judge.Status{}, true
+	for _, c := range ev.Components {
+		v := r.PostFormValue(fmt.Sprintf("c%d", c.ID))
+		if v != "" {
+			if !slices.Contains(declarable, judge.Status(v)) {
+				bad = true
+				continue
+			}
+			chosen[c.ID] = judge.Status(v)
+		}
+		if v != c.Current {
+			same = false
+		}
+	}
+	if !same {
+		e.Components = chosen
+	}
+	return e, bad
+}
+
+// handleMaintenanceComplete ends a maintenance in progress now, which
+// also ends its components' maintenance status.
+func (s *Server) handleMaintenanceComplete(w http.ResponseWriter, r *http.Request) {
+	base, err := s.adminBase(w, r, "incidents")
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	in := s.loadIncident(w, r, base.Locale)
+	if in == nil {
+		return
+	}
+	now := time.Now()
+	if in.Maintenance() && in.Active(now) {
+		if err := s.store.EditIncident(r.Context(), in.ID, store.IncidentEdit{ResolvedAt: &now}); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.invalidate()
+		s.log.Info("maintenance completed early", "incident", in.ID, "by", author(r))
+	}
+	http.Redirect(w, r, fmt.Sprintf("/admin/incidents/%d", in.ID), http.StatusSeeOther)
+}
+
+func (s *Server) handleIncidentEdit(w http.ResponseWriter, r *http.Request) {
+	base, err := s.adminBase(w, r, "incidents")
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := readForm(w, r); err != nil {
+		s.renderError(w, r, http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
+		return
+	}
+	in := s.loadIncident(w, r, base.Locale)
+	if in == nil {
+		return
+	}
+	comps, err := s.store.PageComponents(r.Context(), in.PageID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	ev, loc, err := s.editView(r.Context(), base.Locale, in, comps)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	e, bad := readEditForm(r, in, ev, loc)
+	keys := editErrors(in, e, time.Now())
+	if bad {
+		keys = append(keys, "admin.err_time")
+	}
+	if len(keys) > 0 {
+		for _, k := range keys {
+			ev.Errors = append(ev.Errors, i18n.T(base.Locale, k))
+		}
+		ev.Show = true
+		fv := s.formView(base.Locale, in.PageKey, comps, currentStatuses(in))
+		fv.Form = incidentForm{Stage: in.Stage, Notify: true}
+		s.renderIncident(w, http.StatusUnprocessableEntity, base, in, fv, ev)
+		return
+	}
+	if err := s.store.EditIncident(r.Context(), in.ID, e); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.invalidate()
+	s.log.Info("incident edited", "incident", in.ID, "by", author(r))
+	http.Redirect(w, r, fmt.Sprintf("/admin/incidents/%d", in.ID), http.StatusSeeOther)
 }
 
 func currentStatuses(in *store.Incident) map[int64]string {
@@ -575,7 +979,12 @@ func (s *Server) handleIncident(w http.ResponseWriter, r *http.Request) {
 	}
 	fv := s.formView(base.Locale, in.PageKey, comps, currentStatuses(in))
 	fv.Form = incidentForm{Stage: in.Stage, Notify: true}
-	s.renderIncident(w, http.StatusOK, base, in, fv)
+	ev, _, err := s.editView(r.Context(), base.Locale, in, comps)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.renderIncident(w, http.StatusOK, base, in, fv, ev)
 }
 
 func (s *Server) handleIncidentUpdate(w http.ResponseWriter, r *http.Request) {
@@ -604,7 +1013,12 @@ func (s *Server) handleIncidentUpdate(w http.ResponseWriter, r *http.Request) {
 	if len(form.Errors) > 0 {
 		fv := s.formView(base.Locale, in.PageKey, comps, raw)
 		fv.Form = form
-		s.renderIncident(w, http.StatusUnprocessableEntity, base, in, fv)
+		ev, _, err := s.editView(r.Context(), base.Locale, in, comps)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.renderIncident(w, http.StatusUnprocessableEntity, base, in, fv, ev)
 		return
 	}
 	updateID, err := s.store.UpdateIncident(r.Context(), in.ID, store.IncidentInput{
@@ -787,9 +1201,16 @@ func (s *Server) announce(ctx context.Context, incidentID, updateID int64) {
 			Page: in.PageTitle.Get(locale), Title: in.Title, Stage: upd.Stage, Body: upd.Body, At: upd.At,
 			URL: s.incidentURL(in.PageKey, in.ID),
 		}
+		if in.Maintenance() && in.ResolvedAt != nil {
+			loc := time.UTC
+			if p, err := s.pageByKey(ctx, in.PageKey); err == nil && p != nil {
+				loc = pageLocation(*p)
+			}
+			m.Body = i18n.T(locale, "maint.window") + ": " + fmtWindowRange(in.StartedAt, *in.ResolvedAt, loc) + "\n" + m.Body
+		}
 		for _, c := range in.Components {
 			st := c.Status
-			if !in.Open() {
+			if !in.Open() && !in.Maintenance() {
 				st = judge.Operational // the declared status ended with the incident
 			}
 			m.Components = append(m.Components, notify.Component{Name: c.Name.Get(locale), Status: st})

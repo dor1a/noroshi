@@ -29,6 +29,35 @@ type Day struct {
 	Down  time.Duration
 	Maint time.Duration // maintenance time, left out of Up and Down
 	Worst judge.Status  // worst status seen while covered, NoData if none
+	Spans []Span        // outage and maintenance stretches, in time order
+}
+
+// Span is a stretch of one outage or maintenance status within a day. A
+// status that carries on across a gap in prober coverage stays one span;
+// Dur counts only the covered time, which is what uptime counts too.
+type Span struct {
+	Status  judge.Status
+	Start   time.Time
+	End     time.Time
+	Dur     time.Duration
+	Ongoing bool // still in this status when last seen, shortly before now
+
+	event int // index of the status event the span comes from
+}
+
+// addSpan extends the last span when the same status carries on, either
+// without a break or from the same event across a coverage gap.
+func (d *Day) addSpan(st judge.Status, start, end time.Time, ongoing bool, event int) {
+	if n := len(d.Spans); n > 0 {
+		last := &d.Spans[n-1]
+		if last.Status == st && (last.End.Equal(start) || last.event == event) {
+			last.End, last.Ongoing = end, ongoing
+			last.Dur += end.Sub(start)
+			last.event = event
+			return
+		}
+	}
+	d.Spans = append(d.Spans, Span{Status: st, Start: start, End: end, Dur: end.Sub(start), Ongoing: ongoing, event: event})
 }
 
 // HasData reports whether the day has any time that counts toward uptime.
@@ -71,6 +100,11 @@ func counts(s judge.Status) (up, down bool) {
 	}
 }
 
+// liveGap is how close to now the covered time must reach for a status that
+// lasts to its end to count as still going. The prober touches its session
+// every 15 seconds by default.
+const liveGap = 2 * time.Minute
+
 // Compute builds n daily buckets in loc, the last one containing now.
 //
 // events must be sorted by time and should include the last event before
@@ -98,6 +132,12 @@ func Compute(events []Event, covered []Interval, loc *time.Location, now time.Ti
 	}
 
 	cov := merge(clip(covered, windowStart, windowEnd))
+	// A status that runs to the end of covered time is still going, as far
+	// as anyone knows, when that end is recent.
+	var liveEnd time.Time
+	if n := len(cov); n > 0 && windowEnd.Sub(cov[n-1].End) <= liveGap {
+		liveEnd = cov[n-1].End
+	}
 
 	for i, e := range events {
 		segStart := e.At
@@ -115,6 +155,7 @@ func Compute(events []Event, covered []Interval, loc *time.Location, now time.Ti
 			continue
 		}
 		up, down := counts(e.Status)
+		last := i == len(events)-1
 		for _, c := range cov {
 			ps, pe := maxTime(segStart, c.Start), minTime(segEnd, c.End)
 			if !pe.After(ps) {
@@ -131,8 +172,10 @@ func Compute(events []Event, covered []Interval, loc *time.Location, now time.Ti
 					days[d].Up += dur
 				case down:
 					days[d].Down += dur
+					days[d].addSpan(e.Status, ds, de, last && de.Equal(liveEnd), i)
 				case e.Status == judge.Maintenance:
 					days[d].Maint += dur
+					days[d].addSpan(e.Status, ds, de, last && de.Equal(liveEnd), i)
 				}
 				if e.Status.Severity() > days[d].Worst.Severity() {
 					days[d].Worst = e.Status
@@ -191,4 +234,42 @@ func minTime(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// Outage is a stretch of partial or major outage of one component. End is
+// nil while it lasts.
+type Outage struct {
+	Start time.Time
+	End   *time.Time
+	Worst judge.Status
+}
+
+// Outages lists the outages in events that were still going at from or
+// began after it, oldest first. events must be sorted by time; partial and
+// major outage in a row are one outage at its worst status.
+func Outages(events []Event, from time.Time) []Outage {
+	var out []Outage
+	var cur *Outage
+	for _, e := range events {
+		_, down := counts(e.Status)
+		switch {
+		case down && cur == nil:
+			cur = &Outage{Start: e.At, Worst: e.Status}
+		case down:
+			if e.Status.Severity() > cur.Worst.Severity() {
+				cur.Worst = e.Status
+			}
+		case cur != nil:
+			end := e.At
+			cur.End = &end
+			if end.After(from) {
+				out = append(out, *cur)
+			}
+			cur = nil
+		}
+	}
+	if cur != nil {
+		out = append(out, *cur)
+	}
+	return out
 }

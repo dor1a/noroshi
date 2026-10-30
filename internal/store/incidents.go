@@ -18,6 +18,9 @@ const (
 	StageIdentified    = "identified"
 	StageMonitoring    = "monitoring"
 	StageResolved      = "resolved"
+	// StageScheduled is the stage a maintenance is stored with. What it
+	// shows, upcoming, in progress, or done, follows from its window.
+	StageScheduled = "scheduled"
 )
 
 // Stages lists the incident stages in order.
@@ -26,13 +29,23 @@ var Stages = []string{StageInvestigating, StageIdentified, StageMonitoring, Stag
 // ErrNotFound is returned when an incident does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrOpenIncident is returned when an edit needs a resolved incident.
+var ErrOpenIncident = errors.New("incident is still open")
+
 // ErrLatestUpdate is returned when deleting an incident's newest update,
 // which carries its current stage.
 var ErrLatestUpdate = errors.New("latest update")
 
 // Incident is an incident with its timeline and affected components.
+// Kinds of incident.
+const (
+	KindIncident    = "incident"
+	KindMaintenance = "maintenance"
+)
+
 type Incident struct {
 	ID         int64
+	Kind       string
 	PageID     int64
 	PageKey    string
 	PageTitle  i18n.Text
@@ -47,6 +60,37 @@ type Incident struct {
 
 // Open reports whether the incident is not resolved yet.
 func (i Incident) Open() bool { return i.ResolvedAt == nil }
+
+// Maintenance reports whether the incident is a planned maintenance.
+func (i Incident) Maintenance() bool { return i.Kind == KindMaintenance }
+
+// Maintenance phases.
+const (
+	PhaseUpcoming = "upcoming"
+	PhaseActive   = "active"
+	PhaseDone     = "done"
+)
+
+// Phase is where a maintenance stands at now: upcoming before its window,
+// active inside it, done after it.
+func (i Incident) Phase(now time.Time) string {
+	switch {
+	case now.Before(i.StartedAt):
+		return PhaseUpcoming
+	case i.ResolvedAt == nil || now.Before(*i.ResolvedAt):
+		return PhaseActive
+	}
+	return PhaseDone
+}
+
+// Active reports whether the incident is going on at now: an open incident,
+// or a maintenance inside its window.
+func (i Incident) Active(now time.Time) bool {
+	if i.Maintenance() {
+		return i.Phase(now) == PhaseActive
+	}
+	return i.Open()
+}
 
 // Worst is the most severe status among the affected components, or
 // NoData when the incident names none.
@@ -99,23 +143,63 @@ type IncidentInput struct {
 	Author     string
 	At         time.Time
 	Components map[int64]judge.Status
+	// Since is when a new incident began, for one recorded after the fact;
+	// zero means At. Declared statuses start here.
+	Since time.Time
+	// Kind and Until are for a new maintenance: Until is the end of its
+	// window, where its resolve time and declared statuses end.
+	Kind  string
+	Until *time.Time
+}
+
+func (in IncidentInput) since() time.Time {
+	if in.Since.IsZero() {
+		return in.At
+	}
+	return in.Since
 }
 
 // CreateIncident stores a new incident with its first update.
+//
+// An incident created resolved keeps its declared statuses for the period
+// it covers, Since to At: the uptime of that period counts them and the
+// days show the incident. Without Since the period is empty, which links
+// the components without touching uptime.
 func (s *Store) CreateIncident(ctx context.Context, pageID int64, title string, in IncidentInput) (incidentID, updateID int64, err error) {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return 0, 0, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	kind := in.Kind
+	if kind == "" {
+		kind = KindIncident
+	}
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO incident (page_id, title, stage, started_at, created_by)
-		VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		pageID, title, in.Stage, in.At, in.Author).Scan(&incidentID); err != nil {
+		INSERT INTO incident (page_id, title, stage, started_at, created_by, kind)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		pageID, title, in.Stage, in.since(), in.Author, kind).Scan(&incidentID); err != nil {
 		return 0, 0, err
 	}
 	if updateID, err = applyUpdate(ctx, tx, incidentID, in); err != nil {
 		return 0, 0, err
+	}
+	if in.Until != nil {
+		if _, err := tx.Exec(ctx, `UPDATE incident SET resolved_at = $2 WHERE id = $1`, incidentID, *in.Until); err != nil {
+			return 0, 0, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE incident_component SET until = $2 WHERE incident_id = $1 AND until IS NULL`, incidentID, *in.Until); err != nil {
+			return 0, 0, err
+		}
+	}
+	if in.Stage == StageResolved {
+		for cid, st := range in.Components {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO incident_component (incident_id, component_id, status, since, until)
+				VALUES ($1, $2, $3, $4, $5)`, incidentID, cid, string(st), in.since(), in.At); err != nil {
+				return 0, 0, err
+			}
+		}
 	}
 	return incidentID, updateID, tx.Commit(ctx)
 }
@@ -129,7 +213,8 @@ func (s *Store) UpdateIncident(ctx context.Context, id int64, in IncidentInput) 
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	var resolvedAt *time.Time
-	if err := tx.QueryRow(ctx, `SELECT resolved_at FROM incident WHERE id = $1 FOR UPDATE`, id).Scan(&resolvedAt); err != nil {
+	var stage string
+	if err := tx.QueryRow(ctx, `SELECT resolved_at, stage FROM incident WHERE id = $1 FOR UPDATE`, id).Scan(&resolvedAt, &stage); err != nil {
 		if isNoRows(err) {
 			return 0, ErrNotFound
 		}
@@ -140,7 +225,7 @@ func (s *Store) UpdateIncident(ctx context.Context, id int64, in IncidentInput) 
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO incident_update (incident_id, stage, body, at, author)
 			VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-			id, StageResolved, in.Body, in.At, in.Author).Scan(&updateID); err != nil {
+			id, stage, in.Body, in.At, in.Author).Scan(&updateID); err != nil {
 			return 0, err
 		}
 		return updateID, tx.Commit(ctx)
@@ -213,12 +298,120 @@ func applyUpdate(ctx context.Context, tx pgx.Tx, id int64, in IncidentInput) (in
 			}
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO incident_component (incident_id, component_id, status, since)
-				VALUES ($1, $2, $3, $4)`, id, cid, string(want), in.At); err != nil {
+				VALUES ($1, $2, $3, $4)`, id, cid, string(want), in.since()); err != nil {
 				return 0, err
 			}
 		}
 	}
 	return updateID, nil
+}
+
+// IncidentEdit corrects an incident after the fact. Nil fields stay as
+// they are. ResolvedAt and Components apply to resolved incidents only.
+type IncidentEdit struct {
+	Title      *string
+	StartedAt  *time.Time
+	ResolvedAt *time.Time
+	Components map[int64]judge.Status
+}
+
+// EditIncident corrects an incident's title and times, and for a resolved
+// incident its components. Declared statuses that began with the incident
+// move with its start. When a resolved incident's period or components
+// change, its statuses are stored again for the whole period, each at the
+// worst status it had unless new ones are given, and the update that
+// resolved it moves with the resolve time.
+func (s *Store) EditIncident(ctx context.Context, id int64, e IncidentEdit) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var started time.Time
+	var resolved *time.Time
+	if err := tx.QueryRow(ctx, `SELECT started_at, resolved_at FROM incident WHERE id = $1 FOR UPDATE`, id).Scan(&started, &resolved); err != nil {
+		if isNoRows(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if e.Title != nil {
+		if _, err := tx.Exec(ctx, `UPDATE incident SET title = $2 WHERE id = $1`, id, *e.Title); err != nil {
+			return err
+		}
+	}
+	start := started
+	if e.StartedAt != nil {
+		start = *e.StartedAt
+	}
+	if resolved == nil {
+		if e.ResolvedAt != nil || e.Components != nil {
+			return ErrOpenIncident
+		}
+		if !start.Equal(started) {
+			if _, err := tx.Exec(ctx, `UPDATE incident_component SET since = $2 WHERE incident_id = $1 AND since = $3`, id, start, started); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE incident SET started_at = $2 WHERE id = $1`, id, start); err != nil {
+				return err
+			}
+		}
+		return tx.Commit(ctx)
+	}
+
+	end := *resolved
+	if e.ResolvedAt != nil {
+		end = *e.ResolvedAt
+	}
+	moved := !start.Equal(started) || !end.Equal(*resolved)
+	comps := e.Components
+	if comps == nil && moved {
+		comps = map[int64]judge.Status{}
+		rows, err := tx.Query(ctx, `SELECT component_id, status FROM incident_component WHERE incident_id = $1`, id)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var cid int64
+			var st string
+			if err := rows.Scan(&cid, &st); err != nil {
+				rows.Close()
+				return err
+			}
+			if cur, ok := comps[cid]; !ok || judge.Status(st).Severity() > cur.Severity() {
+				comps[cid] = judge.Status(st)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	if comps != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM incident_component WHERE incident_id = $1`, id); err != nil {
+			return err
+		}
+		for cid, st := range comps {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO incident_component (incident_id, component_id, status, since, until)
+				VALUES ($1, $2, $3, $4, $5)`, id, cid, string(st), start, end); err != nil {
+				return err
+			}
+		}
+	}
+	if moved {
+		if _, err := tx.Exec(ctx, `UPDATE incident SET started_at = $2, resolved_at = $3 WHERE id = $1`, id, start, end); err != nil {
+			return err
+		}
+		if !end.Equal(*resolved) {
+			if _, err := tx.Exec(ctx, `
+				UPDATE incident_update SET at = $2
+				WHERE incident_id = $1 AND stage = $3 AND at = $4`, id, end, StageResolved, *resolved); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // DeleteIncident removes an incident, its timeline, and its declared
@@ -302,7 +495,7 @@ func (s *Store) AllIncidents(ctx context.Context, since time.Time) ([]Incident, 
 
 func (s *Store) loadIncidents(ctx context.Context, where string, args ...any) ([]Incident, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT i.id, i.page_id, p.key, p.title, i.title, i.stage, i.started_at, i.resolved_at, i.created_by
+		SELECT i.id, i.kind, i.page_id, p.key, p.title, i.title, i.stage, i.started_at, i.resolved_at, i.created_by
 		FROM incident i JOIN page p ON p.id = i.page_id
 		WHERE `+where+`
 		ORDER BY i.started_at DESC, i.id DESC`, args...)
@@ -314,7 +507,7 @@ func (s *Store) loadIncidents(ctx context.Context, where string, args ...any) ([
 	for rows.Next() {
 		var in Incident
 		var ptitle []byte
-		if err := rows.Scan(&in.ID, &in.PageID, &in.PageKey, &ptitle, &in.Title, &in.Stage,
+		if err := rows.Scan(&in.ID, &in.Kind, &in.PageID, &in.PageKey, &ptitle, &in.Title, &in.Stage,
 			&in.StartedAt, &in.ResolvedAt, &in.CreatedBy); err != nil {
 			rows.Close()
 			return nil, err
@@ -445,6 +638,39 @@ func (s *Store) Overrides(ctx context.Context, ids []int64, from time.Time) (map
 			o.End = *until
 		}
 		out[cid] = append(out[cid], o)
+	}
+	return out, rows.Err()
+}
+
+// IncidentLink ties an incident to a component for the time the incident
+// declared a status on it.
+type IncidentLink struct {
+	IncidentID int64
+	Title      string
+	Start      time.Time
+	End        *time.Time // nil while the status is still declared
+}
+
+// IncidentLinks returns, per component, the incidents whose declared
+// statuses overlap [from, now), oldest first.
+func (s *Store) IncidentLinks(ctx context.Context, ids []int64, from time.Time) (map[int64][]IncidentLink, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT ic.component_id, i.id, i.title, ic.since, ic.until
+		FROM incident_component ic JOIN incident i ON i.id = ic.incident_id
+		WHERE ic.component_id = ANY($1) AND (ic.until IS NULL OR ic.until > $2)
+		ORDER BY ic.since, ic.id`, ids, from)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]IncidentLink{}
+	for rows.Next() {
+		var cid int64
+		var l IncidentLink
+		if err := rows.Scan(&cid, &l.IncidentID, &l.Title, &l.Start, &l.End); err != nil {
+			return nil, err
+		}
+		out[cid] = append(out[cid], l)
 	}
 	return out, rows.Err()
 }

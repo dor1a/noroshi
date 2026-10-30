@@ -404,6 +404,7 @@ func (s *Store) StatusEvents(ctx context.Context, ids []int64, from time.Time) (
 // AdminCheck is a check with its location and state for the admin view.
 type AdminCheck struct {
 	ID            int64
+	ComponentID   int64
 	PageKey       string
 	PageTitle     i18n.Text
 	ComponentKey  string
@@ -430,7 +431,7 @@ func (s *Store) AdminCheck(ctx context.Context, id int64) (*AdminCheck, error) {
 
 func (s *Store) adminChecks(ctx context.Context, only int64) ([]AdminCheck, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT k.id, p.key, p.title, c.key, c.name, k.key, k.type, k.spec,
+		SELECT k.id, c.id, p.key, p.title, c.key, c.name, k.key, k.type, k.spec,
 		       st.state, st.degraded, st.since, st.consecutive_fail, st.consecutive_ok,
 		       st.last_at, st.last_ok, st.last_latency_ms, st.last_detail, st.cert_expiry, st.domain_expiry
 		FROM checks k
@@ -453,7 +454,7 @@ func (s *Store) adminChecks(ctx context.Context, only int64) ([]AdminCheck, erro
 		var since *time.Time
 		var cf, co *int
 		st := StateRow{}
-		if err := rows.Scan(&a.ID, &a.PageKey, &ptitle, &a.ComponentKey, &cname, &a.Key, &a.Type, &spec,
+		if err := rows.Scan(&a.ID, &a.ComponentID, &a.PageKey, &ptitle, &a.ComponentKey, &cname, &a.Key, &a.Type, &spec,
 			&state, &degraded, &since, &cf, &co,
 			&st.LastAt, &st.LastOK, &st.LastLatencyMS, &st.LastDetail, &st.CertExpiry, &st.DomainExpiry); err != nil {
 			return nil, err
@@ -480,25 +481,143 @@ func (s *Store) adminChecks(ctx context.Context, only int64) ([]AdminCheck, erro
 	return out, rows.Err()
 }
 
-// RecentResults returns the newest results for a check.
-func (s *Store) RecentResults(ctx context.Context, checkID int64, limit int) ([]Result, error) {
+// FailureRun is a stretch of consecutive failed results of one check.
+type FailureRun struct {
+	Start  time.Time  // first failed result
+	Last   time.Time  // last failed result
+	End    *time.Time // first passing result after the run, nil while failing
+	Count  int
+	Detail string // reason of the first failure
+}
+
+// FailureRuns returns the newest runs of consecutive failures that overlap
+// [from, to). Runs are found among the results since `since`, so one that
+// began before from is returned whole. Skipped results neither break nor
+// extend a run, and slow results pass.
+func (s *Store) FailureRuns(ctx context.Context, checkID int64, since, from, to time.Time, limit int) ([]FailureRun, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT check_id, at, ok, slow, skipped, latency_ms, detail
-		FROM check_result WHERE check_id = $1
-		ORDER BY at DESC LIMIT $2`, checkID, limit)
+		WITH r AS (
+			SELECT at, ok, detail,
+			       row_number() OVER (ORDER BY at) - row_number() OVER (PARTITION BY ok ORDER BY at) AS grp
+			FROM check_result
+			WHERE check_id = $1 AND at >= $2 AND NOT skipped
+		), runs AS (
+			SELECT min(at) AS start_at, max(at) AS last_at, count(*) AS n,
+			       (array_agg(detail ORDER BY at))[1] AS detail
+			FROM r WHERE NOT ok GROUP BY grp
+		)
+		SELECT runs.start_at, runs.last_at, nxt.at, runs.n, runs.detail
+		FROM runs
+		LEFT JOIN LATERAL (
+			SELECT at FROM check_result
+			WHERE check_id = $1 AND at > runs.last_at AND ok AND NOT skipped
+			ORDER BY at LIMIT 1
+		) nxt ON true
+		WHERE runs.start_at < $4 AND (nxt.at IS NULL OR nxt.at > $3)
+		ORDER BY runs.start_at DESC
+		LIMIT $5`, checkID, since, from, to, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	var out []FailureRun
+	for rows.Next() {
+		var f FailureRun
+		if err := rows.Scan(&f.Start, &f.Last, &f.End, &f.Count, &f.Detail); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// LatencyBucket sums up a check's results in one slice of a period.
+type LatencyBucket struct {
+	Index    int // slice number from the start of the period
+	AvgMS    *float64
+	MaxMS    *int
+	Failures int
+	Count    int
+}
+
+// LatencyBuckets cuts [from, to) into n equal slices and returns, for each
+// slice that has results, the average and highest latency of passing
+// results and the number of failures.
+func (s *Store) LatencyBuckets(ctx context.Context, checkID int64, from, to time.Time, n int) ([]LatencyBucket, error) {
+	stride := to.Sub(from).Seconds() / float64(n)
+	if stride <= 0 {
+		return nil, nil
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT floor(extract(epoch FROM at - $2) / $4)::int AS b,
+		       (avg(latency_ms) FILTER (WHERE ok))::float8, max(latency_ms) FILTER (WHERE ok),
+		       count(*) FILTER (WHERE NOT ok AND NOT skipped), count(*)
+		FROM check_result
+		WHERE check_id = $1 AND at >= $2 AND at < $3
+		GROUP BY b ORDER BY b`, checkID, from, to, stride)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LatencyBucket
+	for rows.Next() {
+		var b LatencyBucket
+		if err := rows.Scan(&b.Index, &b.AvgMS, &b.MaxMS, &b.Failures, &b.Count); err != nil {
+			return nil, err
+		}
+		if b.Index >= 0 && b.Index < n {
+			out = append(out, b)
+		}
+	}
+	return out, rows.Err()
+}
+
+// Failure is one failed result and the check it came from.
+type Failure struct {
+	CheckID int64
+	Key     string
+	At      time.Time
+	Detail  string
+}
+
+// FailureBefore returns the newest failed result among a component's checks
+// at or before at, which is what turned the component down. ok is false when
+// there is none, as after the results were pruned.
+func (s *Store) FailureBefore(ctx context.Context, componentID int64, at time.Time) (f Failure, ok bool, err error) {
+	err = s.Pool.QueryRow(ctx, `
+		SELECT k.id, k.key, cr.at, cr.detail
+		FROM check_result cr JOIN checks k ON k.id = cr.check_id
+		WHERE k.component_id = $1 AND k.archived_at IS NULL AND NOT cr.ok AND NOT cr.skipped AND cr.at <= $2
+		ORDER BY cr.at DESC LIMIT 1`, componentID, at).Scan(&f.CheckID, &f.Key, &f.At, &f.Detail)
+	if isNoRows(err) {
+		return f, false, nil
+	}
+	return f, err == nil, err
+}
+
+// Results returns the newest results for a check in [from, to), at most
+// limit of them, and how many there are in all. failedOnly keeps failed and
+// skipped results.
+func (s *Store) Results(ctx context.Context, checkID int64, from, to time.Time, failedOnly bool, limit int) ([]Result, int, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT check_id, at, ok, slow, skipped, latency_ms, detail, count(*) OVER ()
+		FROM check_result
+		WHERE check_id = $1 AND at >= $2 AND at < $3 AND (NOT $4 OR NOT ok OR skipped)
+		ORDER BY at DESC LIMIT $5`, checkID, from, to, failedOnly, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
 	var out []Result
+	total := 0
 	for rows.Next() {
 		var r Result
-		if err := rows.Scan(&r.CheckID, &r.At, &r.OK, &r.Slow, &r.Skipped, &r.LatencyMS, &r.Detail); err != nil {
-			return nil, err
+		if err := rows.Scan(&r.CheckID, &r.At, &r.OK, &r.Slow, &r.Skipped, &r.LatencyMS, &r.Detail, &total); err != nil {
+			return nil, 0, err
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 func deref[T any](p *T) T {

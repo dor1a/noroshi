@@ -159,6 +159,13 @@ type incidentIn struct {
 	Body       string                  `json:"body"`
 	Components map[string]judge.Status `json:"components"`
 	Notify     bool                    `json:"notify"`
+	// For an incident recorded after the fact. A resolve time implies the
+	// resolved stage when no stage is given.
+	StartedAt  *time.Time `json:"started_at"`
+	ResolvedAt *time.Time `json:"resolved_at"`
+	// "maintenance" plans one for started_at to resolved_at, which may lie
+	// ahead; its components are put under maintenance and stage is ignored.
+	Kind string `json:"kind"`
 }
 
 // updateIn leaves out stage and components to keep the incident's current
@@ -379,17 +386,33 @@ func (s *Server) handleAPIIncidentCreate(w http.ResponseWriter, r *http.Request)
 	}
 	statuses, errs := apiStatuses(comps, in.Components)
 	title, body, stage := strings.TrimSpace(in.Title), normBody(in.Body), in.Stage
-	if stage == "" {
+	maint := in.Kind == store.KindMaintenance
+	switch {
+	case in.Kind != "" && in.Kind != store.KindIncident && !maint:
+		errs = append(errs, fmt.Sprintf("unknown kind %q", in.Kind))
+	case maint:
+		stage = store.StageScheduled
+	case stage == "" && in.ResolvedAt != nil:
+		stage = store.StageResolved
+	case stage == "":
 		stage = store.StageInvestigating
 	}
-	errs = append(errs, apiMessages(incidentErrors(stage, title, body, true, false))...)
+	now := time.Now()
+	errs = append(errs, apiMessages(incidentErrors(stage, title, body, true, maint))...)
+	if maint {
+		errs = append(errs, apiMessages(maintenanceErrors(in.StartedAt, in.ResolvedAt, now))...)
+	} else {
+		errs = append(errs, apiMessages(backfillErrors(stage, in.StartedAt, in.ResolvedAt, now))...)
+	}
 	if len(errs) > 0 {
 		apiError(w, http.StatusUnprocessableEntity, strings.Join(errs, "; "))
 		return
 	}
-	id, updateID, err := s.store.CreateIncident(r.Context(), p.ID, title, store.IncidentInput{
-		Stage: stage, Body: body, Author: apiAuthor(r), At: time.Now(), Components: statuses,
-	})
+	input := newIncident(stage, body, apiAuthor(r), statuses, in.StartedAt, in.ResolvedAt, now)
+	if maint {
+		input = newMaintenance(body, apiAuthor(r), statuses, *in.StartedAt, *in.ResolvedAt, now)
+	}
+	id, updateID, err := s.store.CreateIncident(r.Context(), p.ID, title, input)
 	if err != nil {
 		s.apiFail(w, r, err)
 		return
@@ -400,6 +423,58 @@ func (s *Server) handleAPIIncidentCreate(w http.ResponseWriter, r *http.Request)
 		s.announce(r.Context(), id, updateID)
 	}
 	s.writeIncident(w, r, http.StatusCreated, id)
+}
+
+// incidentEditIn corrects an incident. Fields left out stay; components,
+// when given, replace a resolved incident's components ({} removes them).
+type incidentEditIn struct {
+	Title      *string                 `json:"title"`
+	StartedAt  *time.Time              `json:"started_at"`
+	ResolvedAt *time.Time              `json:"resolved_at"`
+	Components map[string]judge.Status `json:"components"`
+}
+
+func (s *Server) handleAPIIncidentEdit(w http.ResponseWriter, r *http.Request) {
+	var in incidentEditIn
+	if err := decodeJSON(w, r, &in); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	inc := s.apiIncidentFromPath(w, r)
+	if inc == nil {
+		return
+	}
+	e := store.IncidentEdit{StartedAt: in.StartedAt, ResolvedAt: in.ResolvedAt}
+	if in.Title != nil {
+		t := strings.TrimSpace(*in.Title)
+		e.Title = &t
+	}
+	var errs []string
+	if in.Components != nil {
+		comps, err := s.store.PageComponents(r.Context(), inc.PageID)
+		if err != nil {
+			s.apiFail(w, r, err)
+			return
+		}
+		var statuses map[int64]judge.Status
+		statuses, errs = apiStatuses(comps, in.Components)
+		if statuses == nil {
+			statuses = map[int64]judge.Status{}
+		}
+		e.Components = statuses
+	}
+	errs = append(errs, apiMessages(editErrors(inc, e, time.Now()))...)
+	if len(errs) > 0 {
+		apiError(w, http.StatusUnprocessableEntity, strings.Join(errs, "; "))
+		return
+	}
+	if err := s.store.EditIncident(r.Context(), inc.ID, e); err != nil {
+		s.apiFail(w, r, err)
+		return
+	}
+	s.invalidate()
+	s.log.Info("incident edited", "incident", inc.ID, "by", apiAuthor(r))
+	s.writeIncident(w, r, http.StatusOK, inc.ID)
 }
 
 func (s *Server) handleAPIIncidentUpdate(w http.ResponseWriter, r *http.Request) {

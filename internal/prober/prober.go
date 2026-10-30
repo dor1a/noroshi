@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/dor1a/noroshi/internal/config"
 	"github.com/dor1a/noroshi/internal/judge"
 	"github.com/dor1a/noroshi/internal/metrics"
 	"github.com/dor1a/noroshi/internal/probe"
@@ -50,7 +51,7 @@ func New(st *store.Store, m *metrics.Metrics, log *slog.Logger, s Settings) *Pro
 		s.Heartbeat = 15 * time.Second
 	}
 	if s.Retention == 0 {
-		s.Retention = 14 * 24 * time.Hour
+		s.Retention = config.DefaultResultRetention
 	}
 	if s.PruneInterval == 0 {
 		s.PruneInterval = time.Hour

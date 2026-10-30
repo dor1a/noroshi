@@ -169,7 +169,8 @@ The 90-day bars and percentages on the public page follow these rules.
 | Counts as up | `operational`, `degraded_performance` |
 | Left out | `under_maintenance`, no data |
 | No data | Grey bar, left out of the percentage, never counted as down |
-| Days with some maintenance | A day that is maintenance only takes the maintenance colour. A day that mixes maintenance with checked time keeps its percentage colour with a maintenance band at the top, and its tooltip gives the maintenance time |
+| Days with some maintenance | A day that is maintenance only takes the maintenance colour. A day that mixes maintenance with checked time keeps its percentage colour with a maintenance band at the top |
+| Tooltip | Uptime and date, then the time in each of `major_outage`, `partial_outage`, and `under_maintenance` with up to three stretches in the page's `timezone`, then the incidents that declared a status on the component that day. A status that carries on across a gap in prober coverage stays one stretch, and its time counts only the covered minutes |
 | Days | Cut in the page's `timezone` |
 
 ## Data model (draft)
@@ -184,9 +185,9 @@ The 90-day bars and percentages on the public page follow these rules.
 | `check_state` | check, state, since, consecutive_fail, consecutive_ok | prober (current values) |
 | `component_status_event` | component, status, at, source | prober (kept for good) |
 | `prober_session` | instance, started_at, last_seen_at | prober (kept for good). Time outside these sessions counts as no data |
-| `incident` | page, title, stage, started_at, resolved_at, created_by. There is no separate impact field; it is the worst of the component statuses | admins (phase 2) |
+| `incident` | page, kind, title, stage, started_at, resolved_at, created_by. There is no separate impact field; it is the worst of the component statuses. A `maintenance` keeps its window in started_at and resolved_at, which may lie ahead, and shows upcoming, in progress, or completed by the clock | admins (phase 2) |
 | `incident_update` | incident, stage, body, at, author, edited_at, edited_by. Only the body can be edited. The newest update carries the incident's stage and cannot be deleted | admins (phase 2) |
-| `incident_component` | incident, component, status, since, until. The status of an open interval replaces the check result and counts toward uptime | admins (phase 2) |
+| `incident_component` | incident, component, status, since, until. The status of an open interval replaces the check result and counts toward uptime. An incident created resolved keeps its statuses for the period it covers, which is how a past outage is recorded | admins (phase 2) |
 | `notification` | update, notifier, ok, attempts, detail, at. Webhook URLs are not stored | announcements (phase 2) |
 
 Migration SQL is embedded in the binary and applied at startup. Daily uptime is not stored; it is computed from `component_status_event`, `incident_component`, and `prober_session` when a page is drawn (cached for 30 seconds).
@@ -217,8 +218,10 @@ Example alert rules ship in the repo (`deploy/prometheus/rules.yaml`, also loade
 | -- | -- | -- |
 | Public: overall banner, components by group, 90-day bars | Done | |
 | Public: open incidents, past incidents | | Done |
-| Admin: sign-in, current check states and recent results | Done | |
+| Admin: sign-in, current check states by page, recent results and runs of failures | Done | |
 | Admin: incident writing with a timeline, manual status | | Done |
+| Admin: outages of the last day, latency chart, incidents recorded from an outage, corrections, scheduled maintenance | | Done |
+| Public: scheduled maintenance listed ahead of its window | | Done |
 
 - The language comes from `?lang=`, then the cookie, `Accept-Language`, and `NOROSHI_DEFAULT_LOCALE`.
 - Times show in the page's `timezone`.
@@ -248,7 +251,8 @@ api_tokens:
 | GET | `/api/v1/admin/incidents` | Open incidents and those resolved in the last 30 days; `?page=` filters |
 | GET | `/api/v1/admin/incidents/{id}` | One incident with its timeline |
 | GET | `/api/v1/admin/pages` | Every page with its groups, component keys, and current statuses, so a script knows what it can name |
-| POST | `/api/v1/admin/incidents` | Create: page, title, stage, body, components, notify |
+| POST | `/api/v1/admin/incidents` | Create: page, title, stage, body, components, notify, and started_at and resolved_at for an incident recorded after the fact. kind maintenance schedules a window ahead |
+| PATCH | `/api/v1/admin/incidents/{id}` | Correct the title, times, and, once resolved, the components |
 | POST | `/api/v1/admin/incidents/{id}/updates` | Add an update: stage, body, components, notify. Stage and components left out keep the current ones |
 | PATCH | `/api/v1/admin/incidents/{id}/updates/{uid}` | Correct an update's body |
 | DELETE | `/api/v1/admin/incidents/{id}/updates/{uid}` | Delete an update other than the newest |
@@ -262,7 +266,7 @@ Drafts created from Alertmanager webhooks stay in phase 3. They need an unpublis
 | -- | -- | -- |
 | 1. Checks and status page | Checks, judgement, component status, public page, uptime, `/metrics`, admin sign-in | The homelab's checks, domain and certificate expiry included, run on noroshi with Prometheus alert rules in place |
 | 2. Incidents | Incident timeline, past records, manual status, Teams and Discord announcements | One real outage is announced through noroshi and recorded until it is resolved |
-| 3. Extensions | Scheduled maintenance, subscriptions (RSS, then mail), incident drafts from Alertmanager webhooks, static export, `push` checks | Decided item by item |
+| 3. Extensions | Scheduled maintenance (done; announced once when scheduled, not yet at its start and end), subscriptions (RSS, then mail), incident drafts from Alertmanager webhooks, static export, `push` checks | Decided item by item |
 | 4. Kubernetes | Helm chart with ServiceMonitor, PrometheusRule, Gateway API and Ingress routes, probes; several replicas verified on k3s | Running on a cluster in daily use |
 
 ## Out of scope

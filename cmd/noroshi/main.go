@@ -205,7 +205,7 @@ func serve() error {
 		}
 		m.PageInfo(p.Key, title, url)
 	}
-	pr := prober.New(st, m, log, prober.Settings{Locale: env.DefaultLocale})
+	pr := prober.New(st, m, log, prober.Settings{Locale: env.DefaultLocale, Retention: env.ResultRetention})
 	a := auth.New(env, log)
 	srv, err := web.New(st, a, m, pr, env, log)
 	if err != nil {

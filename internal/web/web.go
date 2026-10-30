@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sort"
 	"strconv"
@@ -229,10 +230,8 @@ func (s *Server) invalidate() {
 }
 
 var funcs = template.FuncMap{
-	"t": i18n.T,
-	"tf": func(locale, key string, args ...any) string {
-		return fmt.Sprintf(i18n.T(locale, key), args...)
-	},
+	"t":        i18n.T,
+	"tf":       tf,
 	"pct":      pct,
 	"fmtTime":  fmtTime,
 	"dayClass": dayClass,
@@ -252,7 +251,6 @@ var funcs = template.FuncMap{
 	"stateIcon":  stateIcon,
 	"tipHead":    tipHead,
 	"tipDate":    tipDate,
-	"tipNote":    tipNote,
 }
 
 // pct prints a percentage with two decimals and never rounds a real outage
@@ -265,8 +263,8 @@ func pct(p float64) string {
 	return s
 }
 
-// tipHead, tipDate, and tipNote fill the tooltip of one uptime tick:
-// "99.95% uptime" in the tick's colour, "Mon, Oct 13", and "1m down".
+// tipHead and tipDate fill the top of one uptime tick's tooltip: "99.95%
+// uptime" in the tick's colour and "Mon, Oct 13". dayViews fills the rest.
 func tipHead(locale string, d uptime.Day) string {
 	switch {
 	case d.HasData():
@@ -284,20 +282,14 @@ func tipDate(locale string, d uptime.Day) string {
 	return d.Date.Format("Mon, Jan 2")
 }
 
-func tipNote(locale string, d uptime.Day) string {
-	var notes []string
-	if d.Down > 0 {
-		notes = append(notes, fmt.Sprintf(i18n.T(locale, "uptime.down"), fmtDuration(locale, d.Down)))
-	}
-	if d.Maint > 0 {
-		notes = append(notes, fmt.Sprintf(i18n.T(locale, "uptime.maint"), fmtDuration(locale, d.Maint)))
-	}
-	return strings.Join(notes, ", ")
-}
-
-// fmtDuration prints a duration rounded up to the minute: "1h 23m" or "1시간 23분".
+// fmtDuration prints a duration to the nearest minute, "1h 23m" or "1시간
+// 23분", so it matches the stretches printed next to it. Anything longer than
+// zero shows at least a minute.
 func fmtDuration(locale string, d time.Duration) string {
-	mins := int((d + time.Minute - 1) / time.Minute)
+	mins := int((d + time.Minute/2) / time.Minute)
+	if mins == 0 && d > 0 {
+		mins = 1
+	}
 	h, m := mins/60, mins%60
 	if locale == "ko" {
 		switch {
@@ -583,6 +575,8 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.Handle("GET /admin/incidents/{id}", s.auth.Require(http.HandlerFunc(s.handleIncident)))
 	mux.Handle("POST /admin/incidents/{id}/updates", s.auth.Require(http.HandlerFunc(s.handleIncidentUpdate)))
 	mux.Handle("POST /admin/incidents/{id}/delete", s.auth.Require(http.HandlerFunc(s.handleIncidentDelete)))
+	mux.Handle("POST /admin/incidents/{id}/edit", s.auth.Require(http.HandlerFunc(s.handleIncidentEdit)))
+	mux.Handle("POST /admin/incidents/{id}/complete", s.auth.Require(http.HandlerFunc(s.handleMaintenanceComplete)))
 	mux.Handle("POST /admin/incidents/{id}/updates/{uid}", s.auth.Require(http.HandlerFunc(s.handleUpdateEdit)))
 	mux.Handle("POST /admin/incidents/{id}/updates/{uid}/delete", s.auth.Require(http.HandlerFunc(s.handleUpdateDelete)))
 	// Scripts write incidents with bearer tokens instead of a session.
@@ -591,6 +585,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.Handle("POST /api/v1/admin/incidents", s.apiAuth(s.handleAPIIncidentCreate))
 	mux.Handle("GET /api/v1/admin/incidents/{id}", s.apiAuth(s.handleAPIIncident))
 	mux.Handle("DELETE /api/v1/admin/incidents/{id}", s.apiAuth(s.handleAPIIncidentDelete))
+	mux.Handle("PATCH /api/v1/admin/incidents/{id}", s.apiAuth(s.handleAPIIncidentEdit))
 	mux.Handle("POST /api/v1/admin/incidents/{id}/updates", s.apiAuth(s.handleAPIIncidentUpdate))
 	mux.Handle("PATCH /api/v1/admin/incidents/{id}/updates/{uid}", s.apiAuth(s.handleAPIUpdateEdit))
 	mux.Handle("DELETE /api/v1/admin/incidents/{id}/updates/{uid}", s.apiAuth(s.handleAPIUpdateDelete))
@@ -668,6 +663,7 @@ type componentData struct {
 	Description i18n.Text
 	Status      judge.Status
 	Summary     uptime.Summary
+	Links       []store.IncidentLink
 }
 
 // loadPage builds (or reuses) the data behind one page.
@@ -707,6 +703,10 @@ func (s *Server) loadPage(ctx context.Context, p store.PageRow) (*pageData, erro
 	if err != nil {
 		return nil, err
 	}
+	links, err := s.store.IncidentLinks(ctx, ids, from)
+	if err != nil {
+		return nil, err
+	}
 	incidents, err := s.store.PageIncidents(ctx, p.ID, now.AddDate(0, 0, -PastDays))
 	if err != nil {
 		return nil, err
@@ -716,13 +716,18 @@ func (s *Server) loadPage(ctx context.Context, p store.PageRow) (*pageData, erro
 	var statuses []judge.Status
 	for _, c := range comps {
 		evs := uptime.Apply(events[c.ID], overrides[c.ID])
+		// A scheduled maintenance declares statuses ahead of time; the
+		// component shows what holds now.
 		status := judge.NoData
-		if len(evs) > 0 {
-			status = evs[len(evs)-1].Status
+		for _, e := range evs {
+			if e.At.After(now) {
+				break
+			}
+			status = e.Status
 		}
 		cd := componentData{
 			ID: c.ID, GroupKey: c.GroupKey, Key: c.Key, Name: c.Name, Description: c.Description,
-			Status: status, Summary: uptime.Compute(evs, cov, loc, now, Window),
+			Status: status, Summary: uptime.Compute(evs, cov, loc, now, Window), Links: links[c.ID],
 		}
 		statuses = append(statuses, status)
 		d.Components = append(d.Components, cd)
@@ -781,6 +786,7 @@ type pageView struct {
 	Loc       *time.Location
 	From, To  time.Time
 	Active    []incidentView
+	Upcoming  []incidentView // scheduled maintenance, soonest first
 	Past      []incidentView
 	PastDays  int
 }
@@ -796,9 +802,89 @@ type componentView struct {
 	Name        string
 	Description string
 	Status      judge.Status
-	Days        []uptime.Day
+	Days        []dayView
 	HasData     bool
 	Percent     float64
+}
+
+// dayView is one uptime tick and what its tooltip lists under the date.
+type dayView struct {
+	uptime.Day
+	Lines   []tipLine
+	Related []relatedView
+}
+
+// tipLine is the time a day spent in one status and when that was.
+type tipLine struct {
+	Status  judge.Status
+	Total   string
+	Windows []string
+	More    int
+}
+
+type relatedView struct{ Title, URL string }
+
+// maxWindows is how many stretches a tooltip lists per status.
+const maxWindows = 3
+
+// tipOrder is the order of the lines in a tooltip, worst first.
+var tipOrder = []judge.Status{judge.Major, judge.Partial, judge.Maintenance}
+
+// dayViews adds the tooltip detail to each day: time per status with the
+// stretches in the page's time zone, and the incidents that declared a
+// status on the component during the day.
+func dayViews(locale string, days []uptime.Day, links []store.IncidentLink, loc *time.Location, pageKey string) []dayView {
+	out := make([]dayView, len(days))
+	for i, d := range days {
+		v := dayView{Day: d}
+		for _, st := range tipOrder {
+			var line tipLine
+			var total time.Duration
+			for _, sp := range d.Spans {
+				if sp.Status != st {
+					continue
+				}
+				total += sp.Dur
+				if len(line.Windows) < maxWindows {
+					line.Windows = append(line.Windows, fmtWindow(locale, sp, loc))
+				} else {
+					line.More++
+				}
+			}
+			if total > 0 {
+				line.Status, line.Total = st, fmtDuration(locale, total)
+				v.Lines = append(v.Lines, line)
+			}
+		}
+		end := d.Date.AddDate(0, 0, 1)
+		seen := map[int64]bool{}
+		for _, l := range links {
+			if seen[l.IncidentID] || !l.Start.Before(end) || (l.End != nil && !l.End.After(d.Date)) {
+				continue
+			}
+			seen[l.IncidentID] = true
+			v.Related = append(v.Related, relatedView{
+				Title: l.Title,
+				URL:   "/p/" + pageKey + "/incidents/" + strconv.FormatInt(l.IncidentID, 10),
+			})
+		}
+		out[i] = v
+	}
+	return out
+}
+
+// fmtWindow prints a stretch as "22:36–22:47". One that runs to midnight
+// ends at "24:00", and one still going says so instead of an end.
+func fmtWindow(locale string, sp uptime.Span, loc *time.Location) string {
+	start := sp.Start.In(loc).Format("15:04")
+	if sp.Ongoing {
+		return start + "–" + i18n.T(locale, "uptime.ongoing")
+	}
+	end := sp.End.In(loc)
+	if end.Hour() == 0 && end.Minute() == 0 && end.After(sp.Start) {
+		return start + "–24:00"
+	}
+	return start + "–" + end.Format("15:04")
 }
 
 func (s *Server) pageView(d *pageData, locale, theme string, multi, admin bool) pageView {
@@ -819,9 +905,12 @@ func (s *Server) pageView(d *pageData, locale, theme string, multi, admin bool) 
 	v.PastDays = PastDays
 	for _, in := range d.Incidents {
 		iv := s.incidentView(in, locale, d.Loc, false)
-		if in.Open() {
+		switch {
+		case in.Active(d.UpdatedAt):
 			v.Active = append(v.Active, iv)
-		} else {
+		case in.Maintenance() && in.Phase(d.UpdatedAt) == store.PhaseUpcoming:
+			v.Upcoming = append([]incidentView{iv}, v.Upcoming...)
+		default:
 			v.Past = append(v.Past, iv)
 		}
 	}
@@ -833,7 +922,8 @@ func (s *Server) pageView(d *pageData, locale, theme string, multi, admin bool) 
 			}
 			gv.Components = append(gv.Components, componentView{
 				Name: c.Name.Get(locale), Description: c.Description.Get(locale), Status: c.Status,
-				Days: c.Summary.Days, HasData: c.Summary.HasData(), Percent: c.Summary.Percent(),
+				Days:    dayViews(locale, c.Summary.Days, c.Links, d.Loc, d.Page.Key),
+				HasData: c.Summary.HasData(), Percent: c.Summary.Percent(),
 			})
 		}
 		v.Groups = append(v.Groups, gv)
@@ -927,11 +1017,13 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 }
 
 type apiIncident struct {
-	ID        int64     `json:"id"`
-	Title     string    `json:"title"`
-	Stage     string    `json:"stage"`
-	StartedAt time.Time `json:"started_at"`
-	URL       string    `json:"url"`
+	ID        int64      `json:"id"`
+	Kind      string     `json:"kind"`
+	Title     string     `json:"title"`
+	Stage     string     `json:"stage"`
+	StartedAt time.Time  `json:"started_at"`
+	EndsAt    *time.Time `json:"ends_at,omitempty"` // a maintenance's planned end
+	URL       string     `json:"url"`
 }
 
 type apiComponent struct {
@@ -963,11 +1055,16 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		Incidents  []apiIncident  `json:"incidents"`
 	}{Page: p.Key, Title: p.Title.Get(locale), Status: d.Overall, UpdatedAt: d.UpdatedAt, Incidents: []apiIncident{}}
 	for _, in := range d.Incidents {
-		if in.Open() {
-			out.Incidents = append(out.Incidents, apiIncident{
-				ID: in.ID, Title: in.Title, Stage: in.Stage, StartedAt: in.StartedAt,
+		upcoming := in.Maintenance() && in.Phase(d.UpdatedAt) == store.PhaseUpcoming
+		if in.Active(d.UpdatedAt) || upcoming {
+			ai := apiIncident{
+				ID: in.ID, Kind: in.Kind, Title: in.Title, Stage: in.Stage, StartedAt: in.StartedAt,
 				URL: s.env.BaseURL + incidentPath(in.PageKey, in.ID),
-			})
+			}
+			if in.Maintenance() {
+				ai.Stage, ai.EndsAt = "maint_"+in.Phase(d.UpdatedAt), in.ResolvedAt
+			}
+			out.Incidents = append(out.Incidents, ai)
 		}
 	}
 	for _, c := range d.Components {
@@ -986,23 +1083,25 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 // ---- admin ----
 
 type adminRow struct {
-	ID          int64
-	Page        string
-	PageKey     string
-	Component   string
-	Key         string
-	Type        string
-	Target      string
-	StateKey    string
-	StateLabel  string
-	Streak      string
-	Since       string
-	LastRun     string
-	Latency     string
-	Result      string
-	ResultClass string
-	Expiry      string
-	ExpiryClass string
+	ID           int64
+	Page         string
+	PageKey      string
+	Component    string
+	ComponentKey string
+	Key          string
+	Type         string
+	TypeLabel    string
+	Target       string
+	StateKey     string
+	StateLabel   string
+	Streak       string
+	Since        string
+	LastRun      string
+	Latency      string
+	Result       string
+	ResultClass  string
+	Expiry       string
+	ExpiryClass  string
 
 	LatencyClass string
 	LatencyTip   string
@@ -1065,7 +1164,8 @@ func (s *Server) adminRow(locale string, c store.AdminCheck) adminRow {
 	row := adminRow{
 		LatencyTip: latencyTip(locale, c.Spec),
 		ID:         c.ID, Page: c.PageTitle.Get(locale), PageKey: c.PageKey, Component: c.ComponentName.Get(locale),
-		Key: c.Key, Type: c.Type, Target: c.Spec.Target(), StateKey: string(judge.Unknown),
+		ComponentKey: c.ComponentKey, Key: c.Key, Type: c.Type, TypeLabel: typeLabel(locale, c.Type),
+		Target: c.Spec.Target(), StateKey: string(judge.Unknown),
 		Since: "-", LastRun: "-", Latency: "-", Result: "-", Expiry: "-",
 		StateLabel: i18n.T(locale, "state.unknown"),
 	}
@@ -1201,18 +1301,185 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	view := struct {
-		adminBase
-		Rows []adminRow
-	}{adminBase: base}
+	rows := make([]adminRow, 0, len(checks))
 	for _, c := range checks {
-		view.Rows = append(view.Rows, s.adminRow(base.Locale, c))
+		rows = append(rows, s.adminRow(base.Locale, c))
 	}
-	// Problems first, otherwise keep config order.
-	sort.SliceStable(view.Rows, func(i, j int) bool {
-		return rank(view.Rows[i].StateKey) < rank(view.Rows[j].StateKey)
-	})
-	s.render(w, http.StatusOK, "admin", view)
+	recent, err := s.recentOutages(r.Context(), base.Locale, checks, time.Now())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, http.StatusOK, "admin", struct {
+		adminBase
+		Recent   []outageView
+		Sections []adminSection
+	}{base, recent, adminSections(rows, s.private)})
+}
+
+// adminTime is how the admin pages print a moment, in the server's zone.
+const adminTime = "2006-01-02 15:04:05"
+
+// recentWindow is how far back the admin overview lists outages.
+const recentWindow = 24 * time.Hour
+
+// outageView is one component outage on the admin overview.
+type outageView struct {
+	Page, Component, Status, Start, End, Duration string
+	StatusKey                                     judge.Status
+	Ongoing                                       bool
+	Cause, CauseURL, RecordURL                    string
+	at                                            time.Time
+}
+
+// recentOutages lists the component outages of the last day, newest first,
+// with the failure that started each one and a link to record it.
+func (s *Server) recentOutages(ctx context.Context, locale string, checks []store.AdminCheck, now time.Time) ([]outageView, error) {
+	pages, err := s.store.Pages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	locs := map[string]*time.Location{}
+	for _, p := range pages {
+		locs[p.Key] = pageLocation(p)
+	}
+	type comp struct{ page, pageKey, name, key string }
+	comps := map[int64]comp{}
+	var ids []int64
+	for _, c := range checks {
+		if _, ok := comps[c.ComponentID]; ok {
+			continue
+		}
+		comps[c.ComponentID] = comp{c.PageTitle.Get(locale), c.PageKey, c.ComponentName.Get(locale), c.ComponentKey}
+		ids = append(ids, c.ComponentID)
+	}
+	from := now.Add(-recentWindow)
+	events, err := s.store.StatusEvents(ctx, ids, from)
+	if err != nil {
+		return nil, err
+	}
+	var out []outageView
+	for _, id := range ids {
+		cm := comps[id]
+		loc := locs[cm.pageKey]
+		if loc == nil {
+			loc = time.UTC
+		}
+		for _, o := range uptime.Outages(events[id], from) {
+			v := outageView{
+				Page: cm.page, Component: cm.name, StatusKey: o.Worst, Status: i18n.T(locale, "status."+string(o.Worst)),
+				Start: o.Start.Local().Format(adminTime), at: o.Start,
+			}
+			end := now
+			if o.End != nil {
+				end = *o.End
+				v.End = o.End.Local().Format(adminTime)
+			} else {
+				v.Ongoing = true
+			}
+			v.Duration = fmtDuration(locale, end.Sub(o.Start))
+			// The component turns down a moment after the failing result is stored.
+			f, ok, err := s.store.FailureBefore(ctx, id, o.Start.Add(5*time.Second))
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				v.Cause = f.Key + ": " + f.Detail
+				v.CauseURL = checkPeriodURL(f.CheckID, o.Start, end)
+			}
+			v.RecordURL = recordLink(cm.pageKey, cm.key, o.Worst, o.Start, o.End, loc)
+			out = append(out, v)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].at.After(out[j].at) })
+	return out, nil
+}
+
+// checkPeriodURL opens a check's page on the stretch around an outage.
+func checkPeriodURL(checkID int64, start, end time.Time) string {
+	pad := 10 * time.Minute
+	v := url.Values{
+		"from": {start.Add(-pad).Local().Format(localInput)},
+		"to":   {end.Add(pad).Local().Format(localInput)},
+	}
+	return fmt.Sprintf("/admin/checks/%d?%s", checkID, v.Encode())
+}
+
+// recordLink opens the new incident form filled with one component's
+// outage: the start rounded down and the end rounded up to the minute, so
+// the period covers it, in the page's time zone that the form uses.
+func recordLink(pageKey, componentKey string, st judge.Status, start time.Time, end *time.Time, loc *time.Location) string {
+	v := url.Values{
+		"page": {pageKey}, "component": {componentKey}, "status": {string(st)},
+		"started_at": {start.In(loc).Truncate(time.Minute).Format(localInput)},
+	}
+	if end != nil {
+		e := end.In(loc)
+		if t := e.Truncate(time.Minute); !t.Equal(e) {
+			e = t.Add(time.Minute)
+		}
+		v.Set("resolved_at", e.Format(localInput))
+	}
+	return "/admin/incidents/new?" + v.Encode()
+}
+
+// adminSection is one status page's checks on the admin overview.
+type adminSection struct {
+	Title, Key string
+	Private    bool
+	Down       int
+	Components []checkGroup
+}
+
+// checkGroup is a component with its checks, which share one cell.
+type checkGroup struct {
+	Name string
+	Down bool
+	rank int
+	Rows []adminRow
+}
+
+// adminSections splits the rows by page and then by component, both in
+// config order. Within a page the components with problems come first;
+// within a component the checks keep their config order.
+func adminSections(rows []adminRow, private func(string) bool) []adminSection {
+	var out []adminSection
+	index := map[string]int{}
+	for _, r := range rows {
+		i, ok := index[r.PageKey]
+		if !ok {
+			i = len(out)
+			index[r.PageKey] = i
+			out = append(out, adminSection{Title: r.Page, Key: r.PageKey, Private: private(r.PageKey)})
+		}
+		sec := &out[i]
+		down := r.StateKey == string(judge.Down)
+		if down {
+			sec.Down++
+		}
+		n := len(sec.Components)
+		if n == 0 || sec.Components[n-1].Rows[0].ComponentKey != r.ComponentKey {
+			sec.Components = append(sec.Components, checkGroup{Name: r.Component, rank: rank(r.StateKey)})
+			n++
+		}
+		c := &sec.Components[n-1]
+		c.Rows = append(c.Rows, r)
+		c.Down = c.Down || down
+		c.rank = min(c.rank, rank(r.StateKey))
+	}
+	for _, sec := range out {
+		sort.SliceStable(sec.Components, func(a, b int) bool { return sec.Components[a].rank < sec.Components[b].rank })
+	}
+	return out
+}
+
+// typeLabel names a check type for people: "HTTP request" rather than "http".
+func typeLabel(locale, typ string) string {
+	key := "check.type." + typ
+	if v := i18n.T(locale, key); v != key {
+		return v
+	}
+	return typ
 }
 
 func rank(state string) int {
@@ -1228,6 +1495,177 @@ func rank(state string) int {
 
 type resultView struct {
 	At, Class, Label, Latency, LatencyClass, Detail string
+}
+
+// failureView is one run of consecutive failures on the check page.
+type failureView struct {
+	Start, End, Duration, Detail string
+	Count                        int
+	Judged                       bool // long enough to mark the check down
+	Ongoing                      bool
+	RecordURL                    string
+}
+
+// failureViews formats the runs, newest first. A run that reached the fail
+// threshold is what turned the check down; a shorter one recovered first.
+func failureViews(locale string, runs []store.FailureRun, threshold int, now time.Time) []failureView {
+	out := make([]failureView, 0, len(runs))
+	for _, f := range runs {
+		v := failureView{
+			Start:  f.Start.Local().Format(adminTime),
+			Detail: f.Detail, Count: f.Count, Judged: f.Count >= threshold,
+		}
+		end := now
+		if f.End != nil {
+			end = *f.End
+			v.End = f.End.Local().Format(adminTime)
+		} else {
+			v.Ongoing = true
+		}
+		v.Duration = fmtDuration(locale, end.Sub(f.Start))
+		out = append(out, v)
+	}
+	return out
+}
+
+// resultLimit is how many results the check page lists for a period.
+const resultLimit = 200
+
+type rangePreset struct {
+	Key string
+	Dur time.Duration
+}
+
+// allPresets are the periods the check page can offer, shortest first.
+var allPresets = []rangePreset{
+	{"1h", time.Hour}, {"6h", 6 * time.Hour}, {"24h", 24 * time.Hour},
+	{"7d", 7 * 24 * time.Hour}, {"14d", 14 * 24 * time.Hour}, {"30d", 30 * 24 * time.Hour}, {"90d", 90 * 24 * time.Hour},
+}
+
+const (
+	defaultRange = "14d"
+	localInput   = "2006-01-02T15:04" // datetime-local
+)
+
+// rangePresets are the presets that fit in the retention, plus "all" for
+// the whole retention when it is not a preset itself.
+func rangePresets(retention time.Duration) []rangePreset {
+	var out []rangePreset
+	for _, p := range allPresets {
+		if p.Dur <= retention {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 || out[len(out)-1].Dur < retention {
+		out = append(out, rangePreset{"all", retention})
+	}
+	return out
+}
+
+// retention is how far back raw results reach.
+func (s *Server) retention() time.Duration {
+	if s.env.ResultRetention > 0 {
+		return s.env.ResultRetention
+	}
+	return config.DefaultResultRetention
+}
+
+// presetLabel names a preset: "24 hours", or "all 30 days" for the whole retention.
+func presetLabel(locale string, p rangePreset) string {
+	if p.Key == "all" {
+		return fmt.Sprintf(i18n.T(locale, "admin.range_all"), int(p.Dur/(24*time.Hour)))
+	}
+	return i18n.T(locale, "admin.range_"+p.Key)
+}
+
+// checkRange is the period the check page shows. Preset is empty for a
+// period typed in by hand. Bad is set when the query could not be used and
+// the default period shows instead.
+type checkRange struct {
+	Preset   string
+	From, To time.Time
+	Bad      bool
+}
+
+// parseRange reads ?range=, or ?from= and ?to= as local times in loc, and
+// keeps the period inside the retention of raw results.
+func parseRange(q url.Values, now time.Time, loc *time.Location, retention time.Duration) checkRange {
+	earliest := now.Add(-retention)
+	presets := rangePresets(retention)
+	def := presets[len(presets)-1].Key
+	for _, p := range presets {
+		if p.Key == defaultRange {
+			def = defaultRange
+		}
+	}
+	preset := func(key string) (checkRange, bool) {
+		for _, p := range presets {
+			if p.Key == key {
+				from := now.Add(-p.Dur)
+				if from.Before(earliest) {
+					from = earliest
+				}
+				return checkRange{Preset: key, From: from, To: now}, true
+			}
+		}
+		return checkRange{}, false
+	}
+	fallback := func() checkRange {
+		r, _ := preset(def)
+		r.Bad = true
+		return r
+	}
+	if q.Get("from") == "" && q.Get("to") == "" {
+		key := q.Get("range")
+		if key == "" {
+			key = def
+		}
+		if r, ok := preset(key); ok {
+			return r
+		}
+		return fallback()
+	}
+	r := checkRange{From: earliest, To: now}
+	for _, f := range []struct {
+		name string
+		dst  *time.Time
+	}{{"from", &r.From}, {"to", &r.To}} {
+		if v := q.Get(f.name); v != "" {
+			t, err := time.ParseInLocation(localInput, v, loc)
+			if err != nil {
+				return fallback()
+			}
+			*f.dst = t
+		}
+	}
+	if r.From.Before(earliest) {
+		r.From = earliest
+	}
+	if r.To.After(now) {
+		r.To = now
+	}
+	if !r.From.Before(r.To) {
+		return fallback()
+	}
+	return r
+}
+
+// rangeLabel names the period in section titles: "last 24 hours" or
+// "2026-10-30 22:00–23:00".
+func rangeLabel(locale string, r checkRange, loc *time.Location) string {
+	if r.Preset != "" {
+		return fmt.Sprintf(i18n.T(locale, "admin.range_last"), presetLabel(locale, rangePreset{r.Preset, r.To.Sub(r.From)}))
+	}
+	from, to := r.From.In(loc), r.To.In(loc)
+	if from.Format("2006-01-02") == to.Format("2006-01-02") {
+		return from.Format("2006-01-02 15:04") + "–" + to.Format("15:04")
+	}
+	return from.Format("2006-01-02 15:04") + " – " + to.Format("2006-01-02 15:04")
+}
+
+type presetView struct {
+	Label, Href string
+	Active      bool
 }
 
 func (s *Server) handleAdminCheck(w http.ResponseWriter, r *http.Request) {
@@ -1250,11 +1688,29 @@ func (s *Server) handleAdminCheck(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, r, http.StatusNotFound, i18n.T(base.Locale, "page.notfound"))
 		return
 	}
-	results, err := s.store.RecentResults(r.Context(), id, 50)
+	// Admin pages show times in the server's zone (TZ), like every other time here.
+	now, loc := time.Now(), time.Local
+	q := r.URL.Query()
+	retention := s.retention()
+	rng := parseRange(q, now, loc, retention)
+	failedOnly := q.Get("failed") == "1"
+	results, total, err := s.store.Results(r.Context(), id, rng.From, rng.To, failedOnly, resultLimit)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	runs, err := s.store.FailureRuns(r.Context(), id, now.Add(-retention), rng.From, rng.To, 50)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	slices := chartSlices(rng.To.Sub(rng.From), c.Spec.Interval.Duration)
+	buckets, err := s.store.LatencyBuckets(r.Context(), id, rng.From, rng.To, slices)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	warn, bad := latencyLimits(c.Spec)
 	row := s.adminRow(base.Locale, *c)
 	base.DocTitle = docTitle(base.Brand, row.Component+" / "+row.Key)
 	view := struct {
@@ -1264,16 +1720,52 @@ func (s *Server) handleAdminCheck(w http.ResponseWriter, r *http.Request) {
 		Timeout    string
 		Thresholds string
 		Results    []resultView
+		Failures   []failureView
+		Range      string
+		RangeBad   bool
+		Presets    []presetView
+		From, To   string
+		Min, Max   string
+		FailedOnly bool
+		Total      int
+		Chart      template.HTML
 	}{
 		adminBase:  base,
 		Row:        row,
 		Interval:   c.Spec.Interval.String(),
 		Timeout:    c.Spec.Timeout.String(),
 		Thresholds: fmt.Sprintf(i18n.T(base.Locale, "admin.thresh_fmt"), c.Spec.FailThreshold, c.Spec.RecoverThreshold),
+		Failures:   failureViews(base.Locale, runs, c.Spec.FailThreshold, now),
+		Range:      rangeLabel(base.Locale, rng, loc),
+		RangeBad:   rng.Bad,
+		From:       rng.From.In(loc).Format(localInput),
+		To:         rng.To.In(loc).Format(localInput),
+		Min:        now.Add(-retention).In(loc).Format(localInput),
+		Max:        now.In(loc).Format(localInput),
+		FailedOnly: failedOnly,
+		Total:      total,
+		Chart:      latencyChart(base.Locale, buckets, slices, rng.From, rng.To, warn, bad),
+	}
+	// A run that marked the check down can be recorded as an incident.
+	pageLoc := time.UTC
+	if p, err := s.pageByKey(r.Context(), c.PageKey); err == nil && p != nil {
+		pageLoc = pageLocation(*p)
+	}
+	for i, f := range runs {
+		if view.Failures[i].Judged {
+			view.Failures[i].RecordURL = recordLink(c.PageKey, c.ComponentKey, judge.Major, f.Start, f.End, pageLoc)
+		}
+	}
+	for _, p := range rangePresets(retention) {
+		href := "?range=" + p.Key
+		if failedOnly {
+			href += "&failed=1"
+		}
+		view.Presets = append(view.Presets, presetView{Label: presetLabel(base.Locale, p), Href: href, Active: rng.Preset == p.Key})
 	}
 	for _, res := range results {
 		rv := resultView{
-			At:           res.At.Local().Format("2006-01-02 15:04:05"),
+			At:           res.At.In(loc).Format("2006-01-02 15:04:05"),
 			Latency:      fmt.Sprintf("%d ms", res.LatencyMS),
 			Detail:       res.Detail,
 			LatencyClass: latencyClass(res.LatencyMS, c.Spec),

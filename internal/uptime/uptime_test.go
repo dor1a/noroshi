@@ -161,3 +161,145 @@ func TestCompute(t *testing.T) {
 		}
 	})
 }
+
+func TestComputeSpans(t *testing.T) {
+	now := at(12, 24, 0).Add(-time.Nanosecond)
+	full := []Interval{{Start: at(1, 0, 0), End: now}}
+
+	t.Run("an outage is one span on its day", func(t *testing.T) {
+		ev := []Event{
+			{At: at(1, 0, 0), Status: judge.Operational},
+			{At: at(11, 22, 36), Status: judge.Major},
+			{At: at(11, 22, 47), Status: judge.Operational},
+		}
+		s := Compute(ev, full, kst, now, 3)
+		got := s.Days[1].Spans
+		if len(got) != 1 || got[0].Status != judge.Major || !got[0].Start.Equal(at(11, 22, 36)) || !got[0].End.Equal(at(11, 22, 47)) || got[0].Ongoing {
+			t.Fatalf("day 11 spans %+v", got)
+		}
+		if len(s.Days[0].Spans) != 0 || len(s.Days[2].Spans) != 0 {
+			t.Fatal("other days should have no spans")
+		}
+	})
+
+	t.Run("partial then major are separate spans", func(t *testing.T) {
+		ev := []Event{
+			{At: at(12, 1, 0), Status: judge.Partial},
+			{At: at(12, 1, 10), Status: judge.Major},
+			{At: at(12, 1, 20), Status: judge.Operational},
+		}
+		got := Compute(ev, full, kst, now, 1).Days[0].Spans
+		if len(got) != 2 || got[0].Status != judge.Partial || got[1].Status != judge.Major || !got[0].End.Equal(got[1].Start) {
+			t.Fatalf("spans %+v", got)
+		}
+	})
+
+	t.Run("an outage across midnight splits by day", func(t *testing.T) {
+		ev := []Event{
+			{At: at(10, 23, 50), Status: judge.Major},
+			{At: at(11, 0, 10), Status: judge.Operational},
+		}
+		s := Compute(ev, full, kst, now, 3)
+		a, b := s.Days[0].Spans, s.Days[1].Spans
+		if len(a) != 1 || !a[0].End.Equal(at(11, 0, 0)) || len(b) != 1 || !b[0].Start.Equal(at(11, 0, 0)) || !b[0].End.Equal(at(11, 0, 10)) {
+			t.Fatalf("day 10 %+v, day 11 %+v", a, b)
+		}
+	})
+
+	t.Run("a prober gap inside one status keeps one span", func(t *testing.T) {
+		ev := []Event{
+			{At: at(12, 1, 0), Status: judge.Major},
+			{At: at(12, 2, 0), Status: judge.Operational},
+		}
+		cov := []Interval{{Start: at(12, 0, 0), End: at(12, 1, 20)}, {Start: at(12, 1, 30), End: now}}
+		got := Compute(ev, cov, kst, now, 1).Days[0].Spans
+		if len(got) != 1 || !got[0].Start.Equal(at(12, 1, 0)) || !got[0].End.Equal(at(12, 2, 0)) || got[0].Dur != 50*time.Minute {
+			t.Fatalf("spans %+v", got)
+		}
+	})
+
+	t.Run("a recovery between two outages keeps them apart", func(t *testing.T) {
+		ev := []Event{
+			{At: at(12, 1, 0), Status: judge.Major},
+			{At: at(12, 1, 5), Status: judge.Operational},
+			{At: at(12, 1, 6), Status: judge.Major},
+			{At: at(12, 1, 9), Status: judge.Operational},
+		}
+		got := Compute(ev, full, kst, now, 1).Days[0].Spans
+		if len(got) != 2 || got[0].Dur != 5*time.Minute || got[1].Dur != 3*time.Minute {
+			t.Fatalf("spans %+v", got)
+		}
+	})
+
+	t.Run("an outage still going is marked ongoing", func(t *testing.T) {
+		ev := []Event{{At: at(12, 23, 0), Status: judge.Major}}
+		got := Compute(ev, full, kst, now, 1).Days[0].Spans
+		if len(got) != 1 || !got[0].Ongoing || !got[0].End.Equal(now) {
+			t.Fatalf("spans %+v", got)
+		}
+		// The session is touched every few seconds, so covered time ends a
+		// little before now while the prober is running.
+		lag := []Interval{{Start: at(1, 0, 0), End: now.Add(-15 * time.Second)}}
+		if got := Compute(ev, lag, kst, now, 1).Days[0].Spans; len(got) != 1 || !got[0].Ongoing {
+			t.Fatalf("lagging session %+v", got)
+		}
+		stopped := []Interval{{Start: at(1, 0, 0), End: at(12, 23, 30)}}
+		if got := Compute(ev, stopped, kst, now, 1).Days[0].Spans; len(got) != 1 || got[0].Ongoing {
+			t.Fatalf("stopped prober %+v", got)
+		}
+	})
+
+	t.Run("an ended outage before a live session end is not ongoing", func(t *testing.T) {
+		ev := []Event{
+			{At: at(12, 23, 0), Status: judge.Major},
+			{At: at(12, 23, 10), Status: judge.Operational},
+		}
+		if got := Compute(ev, full, kst, now, 1).Days[0].Spans; len(got) != 1 || got[0].Ongoing {
+			t.Fatalf("spans %+v", got)
+		}
+	})
+
+	t.Run("maintenance is a span too", func(t *testing.T) {
+		ev := []Event{
+			{At: at(12, 2, 0), Status: judge.Maintenance},
+			{At: at(12, 3, 0), Status: judge.Operational},
+		}
+		got := Compute(ev, full, kst, now, 1).Days[0].Spans
+		if len(got) != 1 || got[0].Status != judge.Maintenance {
+			t.Fatalf("spans %+v", got)
+		}
+	})
+
+	t.Run("degraded leaves no span", func(t *testing.T) {
+		ev := []Event{{At: at(12, 0, 0), Status: judge.Degraded}}
+		if got := Compute(ev, full, kst, now, 1).Days[0].Spans; len(got) != 0 {
+			t.Fatalf("spans %+v", got)
+		}
+	})
+}
+
+func TestOutages(t *testing.T) {
+	ev := []Event{
+		{At: at(10, 0, 0), Status: judge.Operational},
+		{At: at(10, 1, 0), Status: judge.Major},
+		{At: at(10, 1, 5), Status: judge.Operational},
+		{At: at(11, 22, 36), Status: judge.Partial},
+		{At: at(11, 22, 40), Status: judge.Major},
+		{At: at(11, 22, 47), Status: judge.Degraded},
+		{At: at(12, 9, 0), Status: judge.Major},
+	}
+	got := Outages(ev, at(11, 0, 0))
+	if len(got) != 2 {
+		t.Fatalf("outages %+v", got)
+	}
+	if a := got[0]; !a.Start.Equal(at(11, 22, 36)) || a.End == nil || !a.End.Equal(at(11, 22, 47)) || a.Worst != judge.Major {
+		t.Fatalf("first %+v", a)
+	}
+	if b := got[1]; !b.Start.Equal(at(12, 9, 0)) || b.End != nil {
+		t.Fatalf("ongoing %+v", b)
+	}
+	// One that began before from and ended after it still counts.
+	if got := Outages(ev[:3], at(10, 1, 2)); len(got) != 1 {
+		t.Fatalf("overlapping %+v", got)
+	}
+}

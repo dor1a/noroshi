@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dor1a/noroshi/internal/i18n"
 )
@@ -38,7 +39,14 @@ type Env struct {
 	DevNoAuth     bool
 	DevEmail      string
 	LogLevel      string
+
+	// ResultRetention is how long raw check results are kept, and so how
+	// far back the check pages reach.
+	ResultRetention time.Duration
 }
+
+// DefaultResultRetention is used when NOROSHI_RESULT_RETENTION is not set.
+const DefaultResultRetention = 14 * 24 * time.Hour
 
 // LoadEnv reads and validates the environment.
 func LoadEnv() (Env, error) {
@@ -76,6 +84,19 @@ func LoadEnv() (Env, error) {
 			errs = append(errs, fmt.Errorf("NOROSHI_DEV_NO_AUTH: %w", err))
 		}
 		e.DevNoAuth = b
+	}
+
+	e.ResultRetention = DefaultResultRetention
+	if v := get("NOROSHI_RESULT_RETENTION"); v != "" {
+		d, err := ParseDuration(v)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("NOROSHI_RESULT_RETENTION: %w", err))
+		case d < 24*time.Hour:
+			errs = append(errs, fmt.Errorf("NOROSHI_RESULT_RETENTION must be at least 1d, got %s", v))
+		default:
+			e.ResultRetention = d
+		}
 	}
 
 	if e.DatabaseURL == "" {

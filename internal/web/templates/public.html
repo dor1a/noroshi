@@ -30,6 +30,22 @@
     {{end}}
   </section>
   {{range .Active}}{{template "incident_card" .}}{{end}}
+  {{if .Upcoming}}
+  <section class="card upcoming">
+    <header class="card-head">
+      <h2>{{t .Locale "maint.upcoming"}}</h2>
+    </header>
+    <ul class="past-list">
+      {{range .Upcoming}}
+      <li>
+        <a href="{{.URL}}">{{.Title}}</a>
+        <span class="when">{{.Window}}</span>
+        {{if .Affected}}<span class="affected">{{range .Affected}}<span class="s-{{.Status}}">{{.Name}}</span>{{end}}</span>{{end}}
+      </li>
+      {{end}}
+    </ul>
+  </section>
+  {{end}}
   <section class="card">
     <header class="card-head">
       <h2>{{t .Locale "card.title"}}</h2>
@@ -53,7 +69,12 @@
         </div>
         {{with .Description}}<p class="desc">{{.}}</p>{{end}}
         <div class="ticks" role="img" aria-label="{{tf $.Locale "uptime.window" $.Window}}">
-          {{- range .Days}}<i class="{{dayClass .}}" data-tip-head="{{tipHead $.Locale .}}" data-tip-date="{{tipDate $.Locale .}}" data-tip-note="{{tipNote $.Locale .}}"></i>{{end -}}
+          {{- range .Days}}<i class="{{dayClass .Day}}" data-tip-head="{{tipHead $.Locale .Day}}" data-tip-date="{{tipDate $.Locale .Day}}">
+            {{- if or .Lines .Related}}<span class="tip-src" hidden>
+              {{- range .Lines}}<span class="tip-line"><span class="tip-st s-{{.Status}}">{{t $.Locale (printf "status.%s" .Status)}}</span><span class="tip-total">{{.Total}}</span><span class="tip-when">{{range $i, $w := .Windows}}{{if $i}}, {{end}}{{$w}}{{end}}{{with .More}} {{tf $.Locale "uptime.more" .}}{{end}}</span></span>{{end}}
+              {{- with .Related}}<span class="tip-rel"><span class="tip-rel-head">{{t $.Locale "uptime.related"}}</span>{{range .}}<a href="{{.URL}}">{{.Title}}</a>{{end}}</span>{{end -}}
+            </span>{{end -}}
+          </i>{{end -}}
         </div>
       </article>
       {{end}}
@@ -91,6 +112,13 @@
     <h2>{{if .URL}}<a href="{{.URL}}">{{.Title}}</a>{{else}}{{.Title}}{{end}}</h2>
     <span class="stage-tag st-{{.StageKey}}">{{.StageLabel}}</span>
   </header>
+  {{with .Window}}<p class="window"><span class="label">{{t $.Locale "maint.window"}}</span> {{.}}</p>{{end}}
+  {{if .Complete}}
+  <form class="form inline" method="post" action="/admin/incidents/{{.ID}}/complete">
+    <button type="submit" class="button small">{{t $.Locale "admin.maint_complete"}}</button>
+    <span class="hint">{{t $.Locale "admin.maint_complete_tip"}}</span>
+  </form>
+  {{end}}
   {{if .Affected}}
   <p class="affected">
     {{range .Affected}}<span class="s-{{.Status}}"><span class="dot" aria-hidden="true">{{statusIcon .Status}}</span>{{.Name}}</span>{{end}}

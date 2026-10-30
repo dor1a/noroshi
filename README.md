@@ -23,10 +23,11 @@ The UI is in English with a full Korean translation.
 
 - Runs `http`, `tcp`, `tls`, `domain_expiry` (RDAP), and `docker` checks defined in a YAML file.
 - Debounces results: by default a check goes down after 3 failures in a row and comes back after 2 successes in a row.
-- Rolls check states up into a component status and shows 90 days of daily uptime bars.
+- Rolls check states up into a component status and shows 90 days of daily uptime bars. A day's tooltip says how long each outage or maintenance status lasted and when, and links the incidents that set a status that day.
 - Exports Prometheus metrics. noroshi sends no check alerts itself; Prometheus and Alertmanager do (see [Alerting](#alerting)).
 - Puts the admin pages behind any OIDC provider. Admin rights come from a group in the ID token.
-- Lets admins write incidents with a timeline (investigating, identified, monitoring, resolved). A status set on a component in an open incident replaces what its checks say and counts toward uptime. Each update can be announced to Discord or Microsoft Teams. An update's text can be corrected later; the page marks it as edited and the correction is not announced. Any update but the latest can be deleted. Scripts can do all of this through a token-protected API.
+- Lets admins write incidents with a timeline (investigating, identified, monitoring, resolved). A status set on a component in an open incident replaces what its checks say and counts toward uptime. An incident can also be recorded after the fact with its start and resolve times, and its statuses then apply to that period only. Its title, times, and components can be corrected later. Each update can be announced to Discord or Microsoft Teams. An update's text can be corrected later; the page marks it as edited and the correction is not announced. Any update but the latest can be deleted. Scripts can do all of this through a token-protected API.
+- Schedules maintenance ahead of time. Its components show as under maintenance during the window and are left out of uptime, the window starts and ends on its own, and the page lists what is coming.
 - Lets several replicas share one database. A Postgres advisory lock picks the one instance that runs checks, and another takes over within about 10 seconds if it stops.
 
 ## Quick look
@@ -64,6 +65,7 @@ Settings come from environment variables. For secrets, set `NAME_FILE` to a file
 | `NOROSHI_DEV_NO_AUTH` | `false` | Turns off admin authentication |
 | `NOROSHI_DEV_EMAIL` | | Email of the dev-mode user, to try `admin.gravatar` without a provider |
 | `NOROSHI_LOG_LEVEL` | `info` | |
+| `NOROSHI_RESULT_RETENTION` | `14d` | How long raw check results are kept, and so how far back the check pages reach. At least `1d` |
 | `TZ` | `UTC` | Time zone for times on the admin pages. Pages use their own `timezone` |
 
 The OIDC redirect URI to register with your provider is `<NOROSHI_ADMIN_URL>/oauth/callback`. The admin group is matched with or without a leading `/`, so Keycloak's full group paths work.
@@ -87,6 +89,10 @@ See [deploy/config.example.yaml](deploy/config.example.yaml). Every `key` is a s
 All types accept `interval`, `timeout`, `fail_threshold`, `recover_threshold`, and `warn_before`. Durations take Go syntax plus days, for example `90s`, `12h`, or `30d`. `domain_expiry` checks default to a 12 hour interval.
 
 On the admin pages, a check that answers slower than `slow_after` shows as degraded and its latency turns amber. Without `slow_after`, latency turns amber past half the timeout. It turns red from 80% of the timeout.
+
+The admin check list is split by status page, each marked public or private, and lists each component's checks under it by type and key. A check's own page shows its runs of failed results, with how long each run lasted and whether it was long enough to mark the check down, a latency chart with columns where it failed, and its results, newest first. All of it covers a period picked from presets or typed in, within the time raw results are kept. The results can be cut down to failures.
+
+The check list starts with the component outages of the last 24 hours, each with the failure that set it off. From there, or from a run on a check's page, an outage opens the new incident form already filled in with the component, its status, and its times.
 
 An expiring certificate or domain only shows up in metrics until it actually expires. A failed RDAP lookup leaves the check's state unchanged.
 
@@ -176,7 +182,8 @@ curl -X POST https://status-admin.example.com/api/v1/admin/incidents \
 
 | Request | Body and behaviour |
 | -- | -- |
-| `POST /api/v1/admin/incidents` | `page`, `title`, `stage` (default `investigating`), `body`, `components`, `notify` |
+| `POST /api/v1/admin/incidents` | `page`, `title`, `stage` (default `investigating`, or `resolved` when `resolved_at` is given), `body`, `components`, `notify`, `started_at`, `resolved_at`, `kind`. The two RFC 3339 times record an incident after the fact: neither may be in the future, `resolved_at` needs the resolved stage, and the component statuses apply from `started_at` to `resolved_at`. A resolved incident without `started_at` links its components to the day without changing uptime. `"kind": "maintenance"` schedules one from `started_at` to `resolved_at`, which may lie ahead; its components go under maintenance for that window and `stage` is ignored |
+| `PATCH /api/v1/admin/incidents/{id}` | `title`, `started_at`, `resolved_at`, `components`. Fields left out stay. Moving the start moves the statuses that began with it. On a resolved incident or a maintenance, a new period or `components` stores the statuses again for the whole period, and `{}` removes them. An open incident's resolve time and components change with an update (422). Nothing is announced |
 | `POST /api/v1/admin/incidents/{id}/updates` | `stage`, `body`, `components`, `notify`. Leaving out `stage` or `components` keeps the current ones. On a resolved incident the update is a note |
 | `PATCH /api/v1/admin/incidents/{id}/updates/{uid}` | `body`. The page marks the update as edited, and it is not announced again |
 | `DELETE /api/v1/admin/incidents/{id}/updates/{uid}` | Any update but the newest, which carries the stage (409) |
@@ -232,8 +239,8 @@ The [chart README](charts/noroshi/README.md) covers the values. The chart has it
 | public | `/` | The page, or a list when there are several |
 | public | `/p/{key}` | One status page |
 | public | `/p/{key}/incidents/{id}` | One incident and its timeline |
-| public | `/api/v1/pages/{key}` | JSON summary with open incidents |
-| admin | `/admin` | Check states and recent results |
+| public | `/api/v1/pages/{key}` | JSON summary with open incidents and scheduled maintenance |
+| admin | `/admin` | Outages of the last day and check states by page |
 | admin | `/admin/incidents` | Write and update incidents |
 | admin | `/api/v1/admin/incidents` | Incident API for scripts, with a bearer token |
 | admin | `/pages`, `/p/{key}` | Every page, private ones included |
