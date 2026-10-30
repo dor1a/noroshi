@@ -92,9 +92,10 @@
         </tbody>
       </table>
     </div>
-    {{else}}
+    {{else if not .Recorded}}
     <p class="notice">{{t .Locale "admin.no_recent_outages"}}</p>
     {{end}}
+    {{if .Recorded}}<p class="hint">{{tf .Locale "admin.outages_recorded" .Recorded}}</p>{{end}}
   </section>
   {{range .Sections}}
   <section class="admin-page">

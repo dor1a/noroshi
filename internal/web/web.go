@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1309,7 +1310,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	for _, c := range checks {
 		rows = append(rows, s.adminRow(base.Locale, c))
 	}
-	recent, err := s.recentOutages(r.Context(), base.Locale, checks, time.Now())
+	recent, recorded, err := s.recentOutages(r.Context(), base.Locale, checks, time.Now())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -1317,8 +1318,9 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	s.render(w, http.StatusOK, "admin", struct {
 		adminBase
 		Recent   []outageView
+		Recorded int
 		Sections []adminSection
-	}{base, recent, adminSections(rows, s.private)})
+	}{base, recent, recorded, adminSections(rows, s.private)})
 }
 
 // adminTime is how the admin pages print a moment, in the server's zone.
@@ -1336,12 +1338,22 @@ type outageView struct {
 	at                                            time.Time
 }
 
+// recordedIn reports whether an incident declared a status on the
+// component at some point in [start, end).
+func recordedIn(links []store.IncidentLink, start, end time.Time) bool {
+	return slices.ContainsFunc(links, func(l store.IncidentLink) bool {
+		return l.Start.Before(end) && (l.End == nil || l.End.After(start))
+	})
+}
+
 // recentOutages lists the component outages of the last day, newest first,
-// with the failure that started each one and a link to record it.
-func (s *Server) recentOutages(ctx context.Context, locale string, checks []store.AdminCheck, now time.Time) ([]outageView, error) {
+// with the failure that started each one and a link to record it. An
+// outage that an incident already names on its component is left out and
+// only counted in recorded.
+func (s *Server) recentOutages(ctx context.Context, locale string, checks []store.AdminCheck, now time.Time) (out []outageView, recorded int, err error) {
 	pages, err := s.store.Pages(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	locs := map[string]*time.Location{}
 	for _, p := range pages {
@@ -1360,9 +1372,12 @@ func (s *Server) recentOutages(ctx context.Context, locale string, checks []stor
 	from := now.Add(-recentWindow)
 	events, err := s.store.StatusEvents(ctx, ids, from)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	var out []outageView
+	links, err := s.store.IncidentLinks(ctx, ids, from)
+	if err != nil {
+		return nil, 0, err
+	}
 	for _, id := range ids {
 		cm := comps[id]
 		loc := locs[cm.pageKey]
@@ -1381,11 +1396,15 @@ func (s *Server) recentOutages(ctx context.Context, locale string, checks []stor
 			} else {
 				v.Ongoing = true
 			}
+			if recordedIn(links[id], o.Start, end) {
+				recorded++
+				continue
+			}
 			v.Duration = fmtDuration(locale, end.Sub(o.Start))
 			// The component turns down a moment after the failing result is stored.
 			f, ok, err := s.store.FailureBefore(ctx, id, o.Start.Add(5*time.Second))
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			if ok {
 				v.Cause = f.Key + ": " + f.Detail
@@ -1396,7 +1415,7 @@ func (s *Server) recentOutages(ctx context.Context, locale string, checks []stor
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].at.After(out[j].at) })
-	return out, nil
+	return out, recorded, nil
 }
 
 // checkPeriodURL opens a check's page on the stretch around an outage.

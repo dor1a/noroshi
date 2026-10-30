@@ -154,10 +154,14 @@ func TestAdminTemplates(t *testing.T) {
 	out := render(t, s, "admin", struct {
 		adminBase
 		Recent   []outageView
+		Recorded int
 		Sections []adminSection
-	}{base, recent, secs})
+	}{base, recent, 2, secs})
 	if !strings.Contains(out, "최근 24시간 장애") || !strings.Contains(out, `href="/admin/incidents/new?page=home">인시던트로 기록`) || !strings.Contains(out, "port: timeout") {
 		t.Fatal("recent outages not rendered")
+	}
+	if !strings.Contains(out, "인시던트로 기록된 장애 2건은 목록에서 뺐습니다") {
+		t.Fatal("recorded outages are not counted")
 	}
 	if !strings.Contains(out, `href="/p/home" title="페이지 보기">/p/home ↗</a>`) || !strings.Contains(out, "비공개") || !strings.Contains(out, ">공개<") || !strings.Contains(out, `rowspan="2"`) {
 		t.Fatal("page sections not rendered")
@@ -903,5 +907,31 @@ func TestIncidentAcrossPages(t *testing.T) {
 	out = render(t, s, "incident_form", fv)
 	if strings.Count(out, `class="comp-page"`) != 2 || !strings.Contains(out, "Each page shows only its own") {
 		t.Fatal("form does not split components by page")
+	}
+}
+
+func TestRecordedIn(t *testing.T) {
+	at := func(m int) time.Time { return time.Date(2026, 10, 30, 22, m, 0, 0, time.UTC) }
+	end := func(m int) *time.Time { t := at(m); return &t }
+	links := []store.IncidentLink{{IncidentID: 2, Start: at(36), End: end(48)}}
+	for _, c := range []struct {
+		from, to int
+		want     bool
+	}{
+		{36, 47, true},  // inside
+		{30, 40, true},  // starts before the incident
+		{47, 55, true},  // ends after it
+		{20, 36, false}, // ends as the incident starts
+		{48, 50, false}, // starts as it ends
+	} {
+		if got := recordedIn(links, at(c.from), at(c.to)); got != c.want {
+			t.Errorf("%d-%d: got %v", c.from, c.to, got)
+		}
+	}
+	if !recordedIn([]store.IncidentLink{{Start: at(40)}}, at(41), at(45)) {
+		t.Error("an incident still declaring a status covers what follows")
+	}
+	if recordedIn(nil, at(0), at(1)) {
+		t.Error("no links")
 	}
 }

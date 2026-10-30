@@ -92,7 +92,7 @@ On the admin pages, a check that answers slower than `slow_after` shows as degra
 
 The admin check list is split by status page, each marked public or private, and lists each component's checks under it by type and key. A check's own page shows its runs of failed results, with how long each run lasted and whether it was long enough to mark the check down, a latency chart with columns where it failed, and its results, newest first. All of it covers a period picked from presets or typed in, within the time raw results are kept. The results can be cut down to failures.
 
-The check list starts with the component outages of the last 24 hours, each with the failure that set it off. From there, or from a run on a check's page, an outage opens the new incident form already filled in with the component, its status, and its times.
+The check list starts with the component outages of the last 24 hours, each with the failure that set it off. An outage that an incident already names on its component is left out, and the list says how many. From there, or from a run on a check's page, an outage opens the new incident form already filled in with the component, its status, and its times.
 
 An expiring certificate or domain only shows up in metrics until it actually expires. A failed RDAP lookup leaves the check's state unchanged.
 
