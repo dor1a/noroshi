@@ -34,6 +34,8 @@ oidc:
 locale: en
 theme: ""
 logLevel: info
+# How long raw check results are kept, such as 30d. Empty keeps the default, 14d.
+resultRetention: ""
 
 # Secrets are read from files (NAME_FILE). Name an existing Secret and map
 # each variable to a key in it; webhook variables named by notifiers'

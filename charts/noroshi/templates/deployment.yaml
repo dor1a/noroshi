@@ -61,7 +61,8 @@ spec:
                   "NOROSHI_OIDC_SCOPES" .Values.oidc.scopes
                   "NOROSHI_DEFAULT_LOCALE" .Values.locale
                   "NOROSHI_THEME" .Values.theme
-                  "NOROSHI_LOG_LEVEL" .Values.logLevel }}
+                  "NOROSHI_LOG_LEVEL" .Values.logLevel
+                  "NOROSHI_RESULT_RETENTION" .Values.resultRetention }}
             {{- if $value }}
             - name: {{ $name }}
               value: {{ $value | quote }}
