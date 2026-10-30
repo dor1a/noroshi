@@ -88,6 +88,7 @@ type adminIncident struct {
 }
 
 type adminComponent struct {
+	Page   string       `json:"page"`
 	Key    string       `json:"key"`
 	Status judge.Status `json:"status"`
 }
@@ -117,7 +118,7 @@ func (s *Server) adminIncidentJSON(in store.Incident) adminIncident {
 		Components: []adminComponent{}, Updates: []adminUpdate{},
 	}
 	for _, c := range in.Components {
-		out.Components = append(out.Components, adminComponent{Key: c.Key, Status: c.Status})
+		out.Components = append(out.Components, adminComponent{Page: c.PageKey, Key: c.Key, Status: c.Status})
 	}
 	for _, u := range in.Updates {
 		au := adminUpdate{
@@ -225,12 +226,17 @@ func apiMessages(keys []string) []string {
 	return out
 }
 
-// apiStatuses maps component keys to the IDs the store uses. Unknown keys
-// and statuses an admin cannot set are reported rather than dropped.
-func apiStatuses(comps []store.ComponentRow, in map[string]judge.Status) (map[int64]judge.Status, []string) {
+// apiStatuses maps component keys to the IDs the store uses. A bare key
+// names a component on the incident's own page, and "page/key" one on any
+// page. Unknown keys and statuses an admin cannot set are reported rather
+// than dropped.
+func apiStatuses(comps []store.ComponentRow, pageKey string, in map[string]judge.Status) (map[int64]judge.Status, []string) {
 	ids := map[string]int64{}
 	for _, c := range comps {
-		ids[c.Key] = c.ID
+		ids[c.PageKey+"/"+c.Key] = c.ID
+		if c.PageKey == pageKey {
+			ids[c.Key] = c.ID
+		}
 	}
 	keys := make([]string, 0, len(in))
 	for k := range in {
@@ -348,7 +354,7 @@ func (s *Server) handleAPIIncidents(w http.ResponseWriter, r *http.Request) {
 		Incidents []adminIncident `json:"incidents"`
 	}{[]adminIncident{}}
 	for _, in := range list {
-		if page == "" || in.PageKey == page {
+		if page == "" || in.OnPage(page) {
 			out.Incidents = append(out.Incidents, s.adminIncidentJSON(in))
 		}
 	}
@@ -380,12 +386,12 @@ func (s *Server) handleAPIIncidentCreate(w http.ResponseWriter, r *http.Request)
 		apiError(w, http.StatusUnprocessableEntity, msg)
 		return
 	}
-	comps, err := s.store.PageComponents(r.Context(), p.ID)
+	comps, err := s.store.AllComponents(r.Context())
 	if err != nil {
 		s.apiFail(w, r, err)
 		return
 	}
-	statuses, errs := apiStatuses(comps, in.Components)
+	statuses, errs := apiStatuses(comps, p.Key, in.Components)
 	title, body, stage := strings.TrimSpace(in.Title), normBody(in.Body), in.Stage
 	maint := in.Kind == store.KindMaintenance
 	switch {
@@ -452,13 +458,13 @@ func (s *Server) handleAPIIncidentEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	var errs []string
 	if in.Components != nil {
-		comps, err := s.store.PageComponents(r.Context(), inc.PageID)
+		comps, err := s.store.AllComponents(r.Context())
 		if err != nil {
 			s.apiFail(w, r, err)
 			return
 		}
 		var statuses map[int64]judge.Status
-		statuses, errs = apiStatuses(comps, in.Components)
+		statuses, errs = apiStatuses(comps, inc.PageKey, in.Components)
 		if statuses == nil {
 			statuses = map[int64]judge.Status{}
 		}
@@ -506,12 +512,12 @@ func (s *Server) handleAPIIncidentUpdate(w http.ResponseWriter, r *http.Request)
 			statuses[c.ComponentID] = c.Status
 		}
 	default:
-		comps, err := s.store.PageComponents(r.Context(), inc.PageID)
+		comps, err := s.store.AllComponents(r.Context())
 		if err != nil {
 			s.apiFail(w, r, err)
 			return
 		}
-		statuses, errs = apiStatuses(comps, in.Components)
+		statuses, errs = apiStatuses(comps, inc.PageKey, in.Components)
 	}
 	if stage == "" {
 		stage = inc.Stage

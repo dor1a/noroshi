@@ -121,7 +121,7 @@
   {{end}}
   {{if .Affected}}
   <p class="affected">
-    {{range .Affected}}<span class="s-{{.Status}}"><span class="dot" aria-hidden="true">{{statusIcon .Status}}</span>{{.Name}}</span>{{end}}
+    {{range .Affected}}{{with .PageHead}}<span class="affected-page">{{.}}</span>{{end}}<span class="s-{{.Status}}"><span class="dot" aria-hidden="true">{{statusIcon .Status}}</span>{{.Name}}</span>{{end}}
   </p>
   {{end}}
   <ol class="timeline">

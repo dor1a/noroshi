@@ -387,8 +387,8 @@ func TestIncidentTemplates(t *testing.T) {
 		Inc       incidentView
 		FormView  formView
 		Edit      editView
-		PublicURL string
-	}{base, s.incidentView(in, "ko", time.UTC, true), fv, edit, ""})
+		PageLinks []newLink
+	}{base, s.incidentView(in, "ko", time.UTC, true), fv, edit, nil})
 	for _, want := range []string{`<details class="edit" open>`, `action="/admin/incidents/3/edit"`, `name="resolved_at" value="2026-10-30T22:47"`, `<option value="major_outage" selected>`, "Asia/Seoul"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("edit form missing %q", want)
@@ -635,12 +635,16 @@ func TestAdminAPIAuth(t *testing.T) {
 }
 
 func TestAPIStatusesAndJSON(t *testing.T) {
-	comps := []store.ComponentRow{{ID: 2, Key: "db"}, {ID: 9, Key: "web"}}
-	st, errs := apiStatuses(comps, map[string]judge.Status{"db": judge.Major, "web": judge.Maintenance})
-	if len(errs) != 0 || st[2] != judge.Major || st[9] != judge.Maintenance {
+	comps := []store.ComponentRow{
+		{ID: 2, PageKey: "home", Key: "db"}, {ID: 9, PageKey: "home", Key: "web"},
+		{ID: 5, PageKey: "ops", Key: "db"}, {ID: 7, PageKey: "ops", Key: "cache"},
+	}
+	st, errs := apiStatuses(comps, "home", map[string]judge.Status{"db": judge.Major, "home/web": judge.Maintenance, "ops/db": judge.Partial})
+	if len(errs) != 0 || len(st) != 3 || st[2] != judge.Major || st[9] != judge.Maintenance || st[5] != judge.Partial {
 		t.Fatalf("got %v %v", st, errs)
 	}
-	_, errs = apiStatuses(comps, map[string]judge.Status{"cache": judge.Major, "db": "on_fire", "web": judge.NoData})
+	// A bare key names the incident's own page only.
+	_, errs = apiStatuses(comps, "home", map[string]judge.Status{"cache": judge.Major, "db": "on_fire", "web": judge.NoData})
 	if len(errs) != 3 || !strings.Contains(errs[0], `unknown component "cache"`) {
 		t.Fatalf("want three errors, got %v", errs)
 	}
@@ -843,5 +847,61 @@ func TestMaintenance(t *testing.T) {
 	// A maintenance in a timeline: open ones may be edited into the future.
 	if keys := editErrors(&m, store.IncidentEdit{ResolvedAt: ptr(end.Add(time.Hour))}, now); len(keys) != 0 {
 		t.Fatalf("reschedule %v", keys)
+	}
+}
+
+func TestIncidentAcrossPages(t *testing.T) {
+	s := newTestServer(t)
+	pub, ops := i18n.Text{"*": "Public"}, i18n.Text{"*": "Ops"}
+	in := store.Incident{
+		ID: 4, PageID: 1, PageKey: "public", PageTitle: pub, Title: "Power work", Stage: store.StageResolved,
+		StartedAt: time.Date(2026, 10, 22, 9, 45, 0, 0, time.UTC),
+		Components: []store.IncidentComponent{
+			{ComponentID: 10, PageKey: "public", PageTitle: pub, Key: "plex", Name: i18n.Text{"*": "Plex"}, Status: judge.Maintenance},
+			{ComponentID: 20, PageKey: "ops", PageTitle: ops, Key: "router", Name: i18n.Text{"*": "Router"}, Status: judge.Maintenance},
+		},
+	}
+	end := in.StartedAt.Add(2 * time.Hour)
+	in.ResolvedAt = &end
+
+	pages, affected := affectedByPage(in, "en")
+	if pages != "Public · Ops" || !strings.Contains(affected, "Public: ") || !strings.Contains(affected, " · Ops: ") || !strings.Contains(affected, "Router") {
+		t.Fatalf("admin list: %q / %q", pages, affected)
+	}
+
+	// The other page shows it under its own key with its own components only.
+	v := s.incidentView(in.ForPage(store.PageRow{ID: 2, Key: "ops", Title: ops}), "en", time.UTC, false)
+	if v.URL != "/p/ops/incidents/4" || len(v.Affected) != 1 || v.Affected[0].Name != "Router" || v.Affected[0].PageHead != "" {
+		t.Fatalf("ops view %+v", v)
+	}
+	out := render(t, s, "incident_card", v)
+	if strings.Contains(out, "Plex") || strings.Contains(out, "affected-page") {
+		t.Fatal("a page shows another page's components")
+	}
+
+	// The admin card names every component under its page.
+	out = render(t, s, "incident_card", s.incidentView(in, "en", time.UTC, true))
+	if strings.Count(out, `class="affected-page"`) != 2 || !strings.Contains(out, "Plex") || !strings.Contains(out, "Router") {
+		t.Fatal("admin card does not group components by page")
+	}
+
+	// Forms list every page, the incident's own first, each under a heading.
+	comps := []store.ComponentRow{
+		{ID: 20, PageKey: "ops", PageTitle: ops, Key: "router", Name: i18n.Text{"*": "Router"}},
+		{ID: 10, PageKey: "public", PageTitle: pub, Key: "plex", Name: i18n.Text{"*": "Plex"}},
+		{ID: 11, PageKey: "public", PageTitle: pub, Key: "ombi", Name: i18n.Text{"*": "Ombi"}},
+	}
+	got := s.compChoices("en", "public", comps, map[int64]string{20: "under_maintenance"})
+	if len(got) != 3 || got[0].ID != 10 || got[0].PageHead != "Public" || got[1].PageHead != "" || got[2].ID != 20 || got[2].PageHead != "Ops" || got[2].Current != "under_maintenance" {
+		t.Fatalf("choices %+v", got)
+	}
+	if one := s.compChoices("en", "public", comps[1:], nil); one[0].PageHead != "" {
+		t.Fatal("a single page needs no heading")
+	}
+	fv := s.formView("en", "public", comps, nil)
+	fv.Form, fv.Create = incidentForm{Stage: store.StageInvestigating}, true
+	out = render(t, s, "incident_form", fv)
+	if strings.Count(out, `class="comp-page"`) != 2 || !strings.Contains(out, "Each page shows only its own") {
+		t.Fatal("form does not split components by page")
 	}
 }

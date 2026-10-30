@@ -187,7 +187,7 @@ The 90-day bars and percentages on the public page follow these rules.
 | `prober_session` | instance, started_at, last_seen_at | prober (kept for good). Time outside these sessions counts as no data |
 | `incident` | page, kind, title, stage, started_at, resolved_at, created_by. There is no separate impact field; it is the worst of the component statuses. A `maintenance` keeps its window in started_at and resolved_at, which may lie ahead, and shows upcoming, in progress, or completed by the clock | admins (phase 2) |
 | `incident_update` | incident, stage, body, at, author, edited_at, edited_by. Only the body can be edited. The newest update carries the incident's stage and cannot be deleted | admins (phase 2) |
-| `incident_component` | incident, component, status, since, until. The status of an open interval replaces the check result and counts toward uptime. An incident created resolved keeps its statuses for the period it covers, which is how a past outage is recorded | admins (phase 2) |
+| `incident_component` | incident, component, status, since, until. The status of an open interval replaces the check result and counts toward uptime. An incident created resolved keeps its statuses for the period it covers, which is how a past outage is recorded. The component may sit on another page than the incident: the incident then also shows on that page, with that page's components only | admins (phase 2) |
 | `notification` | update, notifier, ok, attempts, detail, at. Webhook URLs are not stored | announcements (phase 2) |
 
 Migration SQL is embedded in the binary and applied at startup. Daily uptime is not stored; it is computed from `component_status_event`, `incident_component`, and `prober_session` when a page is drawn (cached for 30 seconds).
@@ -222,6 +222,7 @@ Example alert rules ship in the repo (`deploy/prometheus/rules.yaml`, also loade
 | Admin: incident writing with a timeline, manual status | | Done |
 | Admin: outages of the last day, latency chart, incidents recorded from an outage, corrections, scheduled maintenance | | Done |
 | Public: scheduled maintenance listed ahead of its window | | Done |
+| Admin: one incident naming components on several pages, announced to each page's channels | | Done |
 
 - The language comes from `?lang=`, then the cookie, `Accept-Language`, and `NOROSHI_DEFAULT_LOCALE`.
 - Times show in the page's `timezone`.

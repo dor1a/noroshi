@@ -711,6 +711,10 @@ func (s *Server) loadPage(ctx context.Context, p store.PageRow) (*pageData, erro
 	if err != nil {
 		return nil, err
 	}
+	// One that spans pages shows here with this page's components only.
+	for i := range incidents {
+		incidents[i] = incidents[i].ForPage(p)
+	}
 
 	d := &pageData{Page: p, Loc: loc, UpdatedAt: now, Incidents: incidents}
 	var statuses []judge.Status

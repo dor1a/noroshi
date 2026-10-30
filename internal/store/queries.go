@@ -311,9 +311,11 @@ func (s *Store) Pages(ctx context.Context) ([]PageRow, error) {
 	return out, rows.Err()
 }
 
-// ComponentRow is an active component with its group.
+// ComponentRow is an active component with its page and group.
 type ComponentRow struct {
 	ID          int64
+	PageKey     string
+	PageTitle   i18n.Text
 	GroupKey    string
 	GroupName   i18n.Text
 	Key         string
@@ -323,11 +325,21 @@ type ComponentRow struct {
 
 // PageComponents lists a page's active components in display order.
 func (s *Store) PageComponents(ctx context.Context, pageID int64) ([]ComponentRow, error) {
+	return s.components(ctx, `c.page_id = $1`, pageID)
+}
+
+// AllComponents lists the active components of every active page, page by
+// page in display order.
+func (s *Store) AllComponents(ctx context.Context) ([]ComponentRow, error) {
+	return s.components(ctx, `p.archived_at IS NULL`)
+}
+
+func (s *Store) components(ctx context.Context, where string, args ...any) ([]ComponentRow, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT c.id, g.key, g.name, c.key, c.name, c.description
-		FROM component c JOIN component_group g ON g.id = c.group_id
-		WHERE c.page_id = $1 AND c.archived_at IS NULL AND g.archived_at IS NULL
-		ORDER BY g.position, c.position`, pageID)
+		SELECT c.id, p.key, p.title, g.key, g.name, c.key, c.name, c.description
+		FROM component c JOIN component_group g ON g.id = c.group_id JOIN page p ON p.id = c.page_id
+		WHERE `+where+` AND c.archived_at IS NULL AND g.archived_at IS NULL
+		ORDER BY p.position, g.position, c.position`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -335,8 +347,11 @@ func (s *Store) PageComponents(ctx context.Context, pageID int64) ([]ComponentRo
 	var out []ComponentRow
 	for rows.Next() {
 		var c ComponentRow
-		var gname, name, desc []byte
-		if err := rows.Scan(&c.ID, &c.GroupKey, &gname, &c.Key, &name, &desc); err != nil {
+		var ptitle, gname, name, desc []byte
+		if err := rows.Scan(&c.ID, &c.PageKey, &ptitle, &c.GroupKey, &gname, &c.Key, &name, &desc); err != nil {
+			return nil, err
+		}
+		if err := scanJSON(ptitle, &c.PageTitle); err != nil {
 			return nil, err
 		}
 		if err := scanJSON(gname, &c.GroupName); err != nil {

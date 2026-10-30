@@ -26,7 +26,7 @@ The UI is in English with a full Korean translation.
 - Rolls check states up into a component status and shows 90 days of daily uptime bars. A day's tooltip says how long each outage or maintenance status lasted and when, and links the incidents that set a status that day.
 - Exports Prometheus metrics. noroshi sends no check alerts itself; Prometheus and Alertmanager do (see [Alerting](#alerting)).
 - Puts the admin pages behind any OIDC provider. Admin rights come from a group in the ID token.
-- Lets admins write incidents with a timeline (investigating, identified, monitoring, resolved). A status set on a component in an open incident replaces what its checks say and counts toward uptime. An incident can also be recorded after the fact with its start and resolve times, and its statuses then apply to that period only. Its title, times, and components can be corrected later. Each update can be announced to Discord or Microsoft Teams. An update's text can be corrected later; the page marks it as edited and the correction is not announced. Any update but the latest can be deleted. Scripts can do all of this through a token-protected API.
+- Lets admins write incidents with a timeline (investigating, identified, monitoring, resolved). A status set on a component in an open incident replaces what its checks say and counts toward uptime. An incident can also be recorded after the fact with its start and resolve times, and its statuses then apply to that period only. Its title, times, and components can be corrected later. One incident can name components on several pages; each page lists it with its own components only, and the title and text are the same on all of them. Each update can be announced to Discord or Microsoft Teams. An update's text can be corrected later; the page marks it as edited and the correction is not announced. Any update but the latest can be deleted. Scripts can do all of this through a token-protected API.
 - Schedules maintenance ahead of time. Its components show as under maintenance during the window and are left out of uptime, the window starts and ends on its own, and the page lists what is coming.
 - Lets several replicas share one database. A Postgres advisory lock picks the one instance that runs checks, and another takes over within about 10 seconds if it stops.
 
@@ -161,6 +161,8 @@ pages:
 
 Delivery is retried on network errors, 429, and 5xx, three tries in all, and each result shows on the incident's admin page. Requests follow `HTTPS_PROXY`. Set `NOROSHI_BASE_URL` so messages link to the incident.
 
+An incident that names components on several pages goes to the channels of each of those pages, once per channel. Each message has the title, link, and components of the page the channel belongs to, so a public page's channel never lists a private page's components.
+
 Announcements are optional. Without `notifiers`, incidents only show on the pages.
 
 ### Incident API
@@ -188,10 +190,10 @@ curl -X POST https://status-admin.example.com/api/v1/admin/incidents \
 | `PATCH /api/v1/admin/incidents/{id}/updates/{uid}` | `body`. The page marks the update as edited, and it is not announced again |
 | `DELETE /api/v1/admin/incidents/{id}/updates/{uid}` | Any update but the newest, which carries the stage (409) |
 | `DELETE /api/v1/admin/incidents/{id}` | The incident and its timeline |
-| `GET /api/v1/admin/incidents`, `GET …/{id}` | Open incidents and those resolved in the last 30 days (`?page=` filters), or one incident. `kind` tells an incident from a maintenance, whose `resolved_at` is its planned end |
+| `GET /api/v1/admin/incidents`, `GET …/{id}` | Open incidents and those resolved in the last 30 days (`?page=` filters, and also finds incidents from other pages that name one of its components), or one incident. `kind` tells an incident from a maintenance, whose `resolved_at` is its planned end |
 | `GET /api/v1/admin/pages` | Every page, private ones included, with its groups, component keys, and the status each shows now |
 
-Components are named by their key in the config. Updates written with a token show `api:<key>` as the author. Errors come back as JSON `{"error": "..."}`.
+Components are named by their key in the config. A bare key names one on the incident's page, and `page/key` names one on any page, for an incident that spans pages. Responses give each component's `page`. Updates written with a token show `api:<key>` as the author. Errors come back as JSON `{"error": "..."}`.
 
 ## Alerting
 

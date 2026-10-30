@@ -37,6 +37,9 @@ func incidentPath(pageKey string, id int64) string {
 type affectedView struct {
 	Name   string
 	Status judge.Status
+	// On admin pages, the first component of each page carries its page
+	// when the incident spans more than one.
+	PageHead string
 }
 
 type noteView struct {
@@ -116,8 +119,13 @@ func (s *Server) incidentView(in store.Incident, locale string, loc *time.Locati
 			v.Window = fmtWindowRange(in.StartedAt, *in.ResolvedAt, loc)
 		}
 	}
-	for _, c := range in.Components {
-		v.Affected = append(v.Affected, affectedView{Name: c.Name.Get(locale), Status: c.Status})
+	multi := admin && len(in.PageKeys()) > 1
+	for i, c := range in.Components {
+		av := affectedView{Name: c.Name.Get(locale), Status: c.Status}
+		if multi && (i == 0 || in.Components[i-1].PageKey != c.PageKey) {
+			av.PageHead = c.PageTitle.Get(locale)
+		}
+		v.Affected = append(v.Affected, av)
 	}
 	for i, u := range in.Updates {
 		uv := updateView{
@@ -173,7 +181,7 @@ func (s *Server) handlePublicIncident(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in, err := s.store.Incident(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && in.PageID != p.ID) {
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !in.OnPage(p.Key)) {
 		notFound()
 		return
 	}
@@ -182,7 +190,7 @@ func (s *Server) handlePublicIncident(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	loc := pageLocation(*p)
-	iv := s.incidentView(*in, locale, loc, false)
+	iv := s.incidentView(in.ForPage(*p), locale, loc, false)
 	home := "/"
 	if len(all) > 1 || isAdminView(r) {
 		home = "/p/" + p.Key
@@ -237,6 +245,35 @@ type compChoice struct {
 	Name    string
 	Group   string
 	Current string
+	// The first component of each page carries its page when the form
+	// lists more than one.
+	PageHead    string
+	PagePrivate bool
+}
+
+// compChoices lists every page's components for a form, the incident's own
+// page first, so one incident can name components on several pages.
+func (s *Server) compChoices(locale, pageKey string, comps []store.ComponentRow, current map[int64]string) []compChoice {
+	ordered := slices.Clone(comps)
+	slices.SortStableFunc(ordered, func(a, b store.ComponentRow) int {
+		switch {
+		case a.PageKey == pageKey && b.PageKey != pageKey:
+			return -1
+		case a.PageKey != pageKey && b.PageKey == pageKey:
+			return 1
+		}
+		return 0
+	})
+	multi := len(ordered) > 0 && slices.ContainsFunc(ordered, func(c store.ComponentRow) bool { return c.PageKey != ordered[0].PageKey })
+	var out []compChoice
+	for i, c := range ordered {
+		cc := compChoice{ID: c.ID, Name: c.Name.Get(locale), Group: c.GroupName.Get(locale), Current: current[c.ID]}
+		if multi && (i == 0 || ordered[i-1].PageKey != c.PageKey) {
+			cc.PageHead, cc.PagePrivate = c.PageTitle.Get(locale), s.private(c.PageKey)
+		}
+		out = append(out, cc)
+	}
+	return out
 }
 
 type incidentForm struct {
@@ -261,24 +298,33 @@ type formView struct {
 	Statuses    []statusChoice
 	Components  []compChoice
 	NotifyNames string
+	NotifyOther bool // some of the channels belong to other pages
 	Submit      string
 	TimeZone    string
 	Maintenance bool
 }
 
 func (s *Server) formView(locale, pageKey string, comps []store.ComponentRow, current map[int64]string) formView {
-	fv := formView{Locale: locale, PageKey: pageKey, NotifyNames: strings.Join(s.pageNotify[pageKey], ", ")}
+	// The page's own channels first, then those of other pages, which an
+	// incident reaches by naming their components.
+	names := slices.Clone(s.pageNotify[pageKey])
+	var other []string
+	for key, list := range s.pageNotify {
+		for _, n := range list {
+			if key != pageKey && !slices.Contains(names, n) && !slices.Contains(other, n) {
+				other = append(other, n)
+			}
+		}
+	}
+	slices.Sort(other)
+	fv := formView{Locale: locale, PageKey: pageKey, NotifyNames: strings.Join(append(names, other...), ", "), NotifyOther: len(other) > 0}
 	for _, st := range store.Stages {
 		fv.Stages = append(fv.Stages, stageChoice{Key: st, Label: i18n.T(locale, "incident.stage."+st)})
 	}
 	for _, st := range declarable {
 		fv.Statuses = append(fv.Statuses, statusChoice{Key: string(st), Label: i18n.T(locale, "status."+string(st)), Glyph: st.Glyph()})
 	}
-	for _, c := range comps {
-		fv.Components = append(fv.Components, compChoice{
-			ID: c.ID, Name: c.Name.Get(locale), Group: c.GroupName.Get(locale), Current: current[c.ID],
-		})
-	}
+	fv.Components = s.compChoices(locale, pageKey, comps, current)
 	return fv
 }
 
@@ -490,6 +536,36 @@ type incidentRow struct {
 
 type newLink struct{ Href, Label string }
 
+// affectedByPage names the pages an incident shows on and its components,
+// put under their page's title when there is more than one page.
+func affectedByPage(in store.Incident, locale string) (pages, affected string) {
+	keys := in.PageKeys()
+	titles := []string{in.PageTitle.Get(locale)}
+	var parts []string
+	for _, key := range keys {
+		var names []string
+		title := ""
+		for _, c := range in.Components {
+			if c.PageKey == key {
+				names = append(names, c.Status.Glyph()+" "+c.Name.Get(locale))
+				title = c.PageTitle.Get(locale)
+			}
+		}
+		if key != in.PageKey {
+			titles = append(titles, title)
+		}
+		if len(names) == 0 {
+			continue
+		}
+		part := strings.Join(names, ", ")
+		if len(keys) > 1 {
+			part = title + ": " + part
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(titles, " · "), strings.Join(parts, " · ")
+}
+
 func (s *Server) handleIncidents(w http.ResponseWriter, r *http.Request) {
 	base, err := s.adminBase(w, r, "incidents")
 	if err != nil {
@@ -527,15 +603,11 @@ func (s *Server) handleIncidents(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	for _, in := range list {
 		row := incidentRow{
-			ID: in.ID, Title: in.Title, Page: in.PageTitle.Get(base.Locale), StageKey: in.Stage,
+			ID: in.ID, Title: in.Title, StageKey: in.Stage,
 			StageLabel: i18n.T(base.Locale, "incident.stage."+in.Stage), Tone: incidentTone(in),
 			Started: in.StartedAt.Local().Format("2006-01-02 15:04"), Resolved: "-",
 		}
-		var names []string
-		for _, c := range in.Components {
-			names = append(names, c.Status.Glyph()+" "+c.Name.Get(base.Locale))
-		}
-		row.Affected = strings.Join(names, ", ")
+		row.Page, row.Affected = affectedByPage(in, base.Locale)
 		if in.ResolvedAt != nil {
 			row.Resolved = in.ResolvedAt.Local().Format("2006-01-02 15:04")
 		}
@@ -597,7 +669,7 @@ func (s *Server) handleIncidentNew(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/incidents", http.StatusFound)
 		return
 	}
-	comps, err := s.store.PageComponents(r.Context(), p.ID)
+	comps, err := s.store.AllComponents(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -630,7 +702,7 @@ func (s *Server) handleIncidentNew(w http.ResponseWriter, r *http.Request) {
 			st = judge.Major
 		}
 		for _, c := range comps {
-			if c.Key == key {
+			if c.Key == key && c.PageKey == p.Key {
 				current = map[int64]string{c.ID: string(st)}
 				form.Title = fmt.Sprintf(i18n.T(base.Locale, "admin.prefill_title"), c.Name.Get(base.Locale))
 			}
@@ -664,7 +736,7 @@ func (s *Server) handleIncidentCreate(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, r, http.StatusNotFound, i18n.T(base.Locale, "page.notfound"))
 		return
 	}
-	comps, err := s.store.PageComponents(r.Context(), p.ID)
+	comps, err := s.store.AllComponents(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -735,20 +807,40 @@ func (s *Server) renderIncident(w http.ResponseWriter, status int, base adminBas
 	if fv.Resolved {
 		fv.Submit = i18n.T(base.Locale, "admin.incident_add_note")
 	}
-	public := ""
-	switch {
-	case s.private(in.PageKey):
-		public = incidentPath(in.PageKey, in.ID) // on this listener
-	case s.env.BaseURL != "":
-		public = s.env.BaseURL + incidentPath(in.PageKey, in.ID)
+	// One link for each page the incident shows on.
+	keys := in.PageKeys()
+	var links []newLink
+	for _, key := range keys {
+		href := ""
+		switch {
+		case s.private(key):
+			href = incidentPath(key, in.ID) // on this listener
+		case s.env.BaseURL != "":
+			href = s.env.BaseURL + incidentPath(key, in.ID)
+		}
+		if href == "" {
+			continue
+		}
+		label := i18n.T(base.Locale, "admin.incident_public")
+		if len(keys) > 1 {
+			title := in.PageTitle.Get(base.Locale)
+			for _, c := range in.Components {
+				if key != in.PageKey && c.PageKey == key {
+					title = c.PageTitle.Get(base.Locale)
+					break
+				}
+			}
+			label = fmt.Sprintf(i18n.T(base.Locale, "admin.incident_view_on"), title)
+		}
+		links = append(links, newLink{Href: href, Label: label})
 	}
 	s.render(w, status, "admin_incident", struct {
 		adminBase
 		Inc       incidentView
 		FormView  formView
 		Edit      editView
-		PublicURL string
-	}{base, s.incidentView(*in, base.Locale, time.Local, true), fv, ev, public})
+		PageLinks []newLink
+	}{base, s.incidentView(*in, base.Locale, time.Local, true), fv, ev, links})
 }
 
 // editView is the form that corrects an incident's record.
@@ -790,9 +882,7 @@ func (s *Server) editView(ctx context.Context, locale string, in *store.Incident
 	for _, st := range declarable {
 		ev.Statuses = append(ev.Statuses, statusChoice{Key: string(st), Label: i18n.T(locale, "status."+string(st)), Glyph: st.Glyph()})
 	}
-	for _, c := range comps {
-		ev.Components = append(ev.Components, compChoice{ID: c.ID, Name: c.Name.Get(locale), Group: c.GroupName.Get(locale), Current: cur[c.ID]})
-	}
+	ev.Components = s.compChoices(locale, in.PageKey, comps, cur)
 	return ev, loc, nil
 }
 
@@ -918,7 +1008,7 @@ func (s *Server) handleIncidentEdit(w http.ResponseWriter, r *http.Request) {
 	if in == nil {
 		return
 	}
-	comps, err := s.store.PageComponents(r.Context(), in.PageID)
+	comps, err := s.store.AllComponents(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -972,7 +1062,7 @@ func (s *Server) handleIncident(w http.ResponseWriter, r *http.Request) {
 	if in == nil {
 		return
 	}
-	comps, err := s.store.PageComponents(r.Context(), in.PageID)
+	comps, err := s.store.AllComponents(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -1001,7 +1091,7 @@ func (s *Server) handleIncidentUpdate(w http.ResponseWriter, r *http.Request) {
 	if in == nil {
 		return
 	}
-	comps, err := s.store.PageComponents(r.Context(), in.PageID)
+	comps, err := s.store.AllComponents(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -1171,8 +1261,10 @@ func (s *Server) incidentURL(pageKey string, id int64) string {
 	return ""
 }
 
-// announce sends one update to the page's channels in the background and
-// records each result.
+// announce sends one update to the channels of every page the incident
+// shows on, in the background, and records each result. A channel gets it
+// once, from the first of those pages that uses it, with that page's title,
+// link, and components only.
 func (s *Server) announce(ctx context.Context, incidentID, updateID int64) {
 	in, err := s.store.Incident(ctx, incidentID)
 	if err != nil {
@@ -1188,49 +1280,59 @@ func (s *Server) announce(ctx context.Context, incidentID, updateID int64) {
 	if upd == nil {
 		return
 	}
-	for _, key := range s.pageNotify[in.PageKey] {
-		t, ok := s.targets[key]
-		if !ok {
+	pages, err := s.store.Pages(ctx)
+	if err != nil {
+		s.log.Error("announce: load pages failed", "incident", incidentID, "err", err)
+		return
+	}
+	sent := map[string]bool{}
+	for _, pageKey := range in.PageKeys() {
+		i := slices.IndexFunc(pages, func(p store.PageRow) bool { return p.Key == pageKey })
+		if i < 0 {
 			continue
 		}
-		locale := t.Locale
-		if locale == "" {
-			locale = s.env.DefaultLocale
-		}
-		m := notify.Message{
-			Page: in.PageTitle.Get(locale), Title: in.Title, Stage: upd.Stage, Body: upd.Body, At: upd.At,
-			URL: s.incidentURL(in.PageKey, in.ID),
-		}
-		if in.Maintenance() && in.ResolvedAt != nil {
-			loc := time.UTC
-			if p, err := s.pageByKey(ctx, in.PageKey); err == nil && p != nil {
-				loc = pageLocation(*p)
+		view := in.ForPage(pages[i])
+		for _, key := range s.pageNotify[pageKey] {
+			t, ok := s.targets[key]
+			if !ok || sent[key] {
+				continue
 			}
-			m.Body = i18n.T(locale, "maint.window") + ": " + fmtWindowRange(in.StartedAt, *in.ResolvedAt, loc) + "\n" + m.Body
+			sent[key] = true
+			locale := t.Locale
+			if locale == "" {
+				locale = s.env.DefaultLocale
+			}
+			m := notify.Message{
+				Page: view.PageTitle.Get(locale), Title: view.Title, Stage: upd.Stage, Body: upd.Body, At: upd.At,
+				URL: s.incidentURL(view.PageKey, view.ID),
+			}
+			if view.Maintenance() && view.ResolvedAt != nil {
+				m.Body = i18n.T(locale, "maint.window") + ": " + fmtWindowRange(view.StartedAt, *view.ResolvedAt, pageLocation(pages[i])) + "\n" + m.Body
+			}
+			for _, c := range view.Components {
+				st := c.Status
+				if !view.Open() && !view.Maintenance() {
+					st = judge.Operational // the declared status ended with the incident
+				}
+				m.Components = append(m.Components, notify.Component{Name: c.Name.Get(locale), Status: st})
+			}
+			s.bg.Add(1)
+			go func() {
+				defer s.bg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				res := s.sender.Send(ctx, t, m)
+				if err := s.store.RecordNotification(ctx, store.Notification{
+					UpdateID: updateID, Notifier: t.Key, OK: res.OK, Attempts: res.Attempts, Detail: res.Detail, At: time.Now(),
+				}); err != nil {
+					s.log.Error("record notification failed", "notifier", t.Key, "err", err)
+				}
+				if res.OK {
+					s.log.Info("announcement sent", "notifier", t.Key, "incident", incidentID, "attempts", res.Attempts)
+				} else {
+					s.log.Warn("announcement failed", "notifier", t.Key, "incident", incidentID, "attempts", res.Attempts, "detail", res.Detail)
+				}
+			}()
 		}
-		for _, c := range in.Components {
-			st := c.Status
-			if !in.Open() && !in.Maintenance() {
-				st = judge.Operational // the declared status ended with the incident
-			}
-			m.Components = append(m.Components, notify.Component{Name: c.Name.Get(locale), Status: st})
-		}
-		s.bg.Add(1)
-		go func() {
-			defer s.bg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			res := s.sender.Send(ctx, t, m)
-			if err := s.store.RecordNotification(ctx, store.Notification{
-				UpdateID: updateID, Notifier: t.Key, OK: res.OK, Attempts: res.Attempts, Detail: res.Detail, At: time.Now(),
-			}); err != nil {
-				s.log.Error("record notification failed", "notifier", t.Key, "err", err)
-			}
-			if res.OK {
-				s.log.Info("announcement sent", "notifier", t.Key, "incident", incidentID, "attempts", res.Attempts)
-			} else {
-				s.log.Warn("announcement failed", "notifier", t.Key, "incident", incidentID, "attempts", res.Attempts, "detail", res.Detail)
-			}
-		}()
 	}
 }

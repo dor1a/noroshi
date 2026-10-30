@@ -334,8 +334,10 @@
   <fieldset class="field">
     <legend class="label">{{t .Locale "admin.incident_components"}}</legend>
     <p class="hint">{{t .Locale "admin.incident_components_tip"}}</p>
+    {{if (index .Components 0).PageHead}}<p class="hint">{{t .Locale "admin.incident_pages_tip"}}</p>{{end}}
     <div class="comp-grid">
       {{range .Components}}
+      {{- if .PageHead}}<p class="comp-page">{{.PageHead}}{{if .PagePrivate}} <span class="tag">{{t $.Locale "page.private"}}</span>{{end}}</p>{{end}}
       <label class="comp">
         <span class="comp-name">{{.Name}}<span class="sub">{{.Group}}</span></span>
         <select name="c{{.ID}}">
@@ -373,6 +375,7 @@
   </label>
   {{if .NotifyNames}}
   <label class="choice"><input type="checkbox" name="notify" value="1"{{if .Form.Notify}} checked{{end}}> {{tf .Locale "admin.incident_notify" .NotifyNames}}</label>
+  {{if .NotifyOther}}<p class="hint">{{t .Locale "admin.incident_notify_other"}}</p>{{end}}
   {{else}}
   <p class="hint">{{t .Locale "admin.incident_no_notifiers"}}</p>
   {{end}}
@@ -396,7 +399,7 @@
 {{template "head" .}}
 <main class="sheet wide">
   {{template "admin_top" .}}
-  <p class="back"><a href="/admin/incidents">{{t .Locale "admin.incident_back"}}</a>{{with .PublicURL}} · <a href="{{.}}">{{t $.Locale "admin.incident_public"}}</a>{{end}}</p>
+  <p class="back"><a href="/admin/incidents">{{t .Locale "admin.incident_back"}}</a>{{range .PageLinks}} · <a href="{{.Href}}">{{.Label}}</a>{{end}}</p>
   <div class="split">
     <div>{{template "incident_card" .Inc}}</div>
     <section class="split-side">
@@ -427,8 +430,10 @@
           <fieldset class="field">
             <legend class="label">{{t .Locale "admin.incident_components"}}</legend>
             <p class="hint">{{t .Locale "admin.edit_components_tip"}}</p>
+            {{if (index .Edit.Components 0).PageHead}}<p class="hint">{{t .Locale "admin.incident_pages_tip"}}</p>{{end}}
             <div class="comp-grid">
               {{range .Edit.Components}}
+              {{- if .PageHead}}<p class="comp-page">{{.PageHead}}{{if .PagePrivate}} <span class="tag">{{t $.Locale "page.private"}}</span>{{end}}</p>{{end}}
               <label class="comp">
                 <span class="comp-name">{{.Name}}<span class="sub">{{.Group}}</span></span>
                 <select name="c{{.ID}}">

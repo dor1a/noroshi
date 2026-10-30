@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -55,7 +56,7 @@ type Incident struct {
 	ResolvedAt *time.Time
 	CreatedBy  string
 	Updates    []IncidentUpdate    // newest first
-	Components []IncidentComponent // in page order
+	Components []IncidentComponent // its own page's first, then in page order
 }
 
 // Open reports whether the incident is not resolved yet.
@@ -92,6 +93,38 @@ func (i Incident) Active(now time.Time) bool {
 	return i.Open()
 }
 
+// An incident shows on its own page and on every other page where it names
+// a component; each page shows only its own components.
+
+// PageKeys lists the pages the incident shows on, its own first and the
+// rest in the order their components come.
+func (i Incident) PageKeys() []string {
+	keys := []string{i.PageKey}
+	for _, c := range i.Components {
+		if !slices.Contains(keys, c.PageKey) {
+			keys = append(keys, c.PageKey)
+		}
+	}
+	return keys
+}
+
+// OnPage reports whether the incident shows on the page.
+func (i Incident) OnPage(key string) bool { return slices.Contains(i.PageKeys(), key) }
+
+// ForPage is the incident as page p shows it: under p, with p's components
+// only.
+func (i Incident) ForPage(p PageRow) Incident {
+	out := i
+	out.PageID, out.PageKey, out.PageTitle = p.ID, p.Key, p.Title
+	out.Components = nil
+	for _, c := range i.Components {
+		if c.PageKey == p.Key {
+			out.Components = append(out.Components, c)
+		}
+	}
+	return out
+}
+
 // Worst is the most severe status among the affected components, or
 // NoData when the incident names none.
 func (i Incident) Worst() judge.Status {
@@ -119,6 +152,8 @@ type IncidentUpdate struct {
 // worst status declared while it was open.
 type IncidentComponent struct {
 	ComponentID int64
+	PageKey     string
+	PageTitle   i18n.Text
 	Key         string
 	Name        i18n.Text
 	Status      judge.Status
@@ -481,10 +516,15 @@ func (s *Store) Incident(ctx context.Context, id int64) (*Incident, error) {
 	return &list[0], nil
 }
 
-// PageIncidents lists a page's open incidents and those resolved since the
-// given time, newest first.
+// PageIncidents lists the open incidents that show on a page and those
+// resolved since the given time, newest first. An incident from another
+// page shows when it names one of this page's components: an open one by
+// the statuses it declares now, as its components show.
 func (s *Store) PageIncidents(ctx context.Context, pageID int64, since time.Time) ([]Incident, error) {
-	return s.loadIncidents(ctx, `i.page_id = $1 AND (i.resolved_at IS NULL OR i.resolved_at >= $2)`, pageID, since)
+	return s.loadIncidents(ctx, `(i.page_id = $1 OR EXISTS (
+			SELECT 1 FROM incident_component ic JOIN component c ON c.id = ic.component_id
+			WHERE ic.incident_id = i.id AND c.page_id = $1 AND (i.resolved_at IS NOT NULL OR ic.until IS NULL)))
+		AND (i.resolved_at IS NULL OR i.resolved_at >= $2)`, pageID, since)
 }
 
 // AllIncidents lists open incidents on every page and those resolved since
@@ -573,10 +613,11 @@ func (s *Store) loadIncidents(ctx context.Context, where string, args ...any) ([
 	// Current status for open rows; for closed ones the worst seen, which is
 	// what a resolved incident shows.
 	crows, err := s.Pool.Query(ctx, `
-		SELECT ic.incident_id, c.id, c.key, c.name, ic.status, ic.until IS NULL
+		SELECT ic.incident_id, c.id, p.key, p.title, c.key, c.name, ic.status, ic.until IS NULL
 		FROM incident_component ic JOIN component c ON c.id = ic.component_id
+		JOIN page p ON p.id = c.page_id
 		WHERE ic.incident_id = ANY($1)
-		ORDER BY c.position, ic.since`, ids)
+		ORDER BY p.position, c.position, ic.since`, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -586,10 +627,13 @@ func (s *Store) loadIncidents(ctx context.Context, where string, args ...any) ([
 	for crows.Next() {
 		var iid int64
 		var c IncidentComponent
-		var name []byte
+		var ptitle, name []byte
 		var st string
 		var open bool
-		if err := crows.Scan(&iid, &c.ComponentID, &c.Key, &name, &st, &open); err != nil {
+		if err := crows.Scan(&iid, &c.ComponentID, &c.PageKey, &ptitle, &c.Key, &name, &st, &open); err != nil {
+			return nil, err
+		}
+		if err := scanJSON(ptitle, &c.PageTitle); err != nil {
 			return nil, err
 		}
 		if err := scanJSON(name, &c.Name); err != nil {
@@ -610,7 +654,22 @@ func (s *Store) loadIncidents(ctx context.Context, where string, args ...any) ([
 		seen[k] = len(in.Components)
 		in.Components = append(in.Components, c)
 	}
-	return out, crows.Err()
+	if err := crows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		own := out[i].PageKey
+		slices.SortStableFunc(out[i].Components, func(a, b IncidentComponent) int {
+			switch {
+			case a.PageKey == own && b.PageKey != own:
+				return -1
+			case a.PageKey != own && b.PageKey == own:
+				return 1
+			}
+			return 0
+		})
+	}
+	return out, nil
 }
 
 // Overrides returns, per component, the incident-declared statuses that
