@@ -33,6 +33,9 @@ oidc:
 # Also the language of component names in noroshi_check_info.
 locale: en
 theme: ""
+# The mode visitors start in until they pick one: light or dark. Empty
+# follows the system setting.
+mode: ""
 logLevel: info
 # How long raw check results are kept, such as 30d. Empty keeps the default, 14d.
 resultRetention: ""
