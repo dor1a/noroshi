@@ -62,6 +62,7 @@ Settings come from environment variables. For secrets, set `NAME_FILE` to a file
 | `NOROSHI_SESSION_KEY` | | At least 32 bytes, signs the session cookie |
 | `NOROSHI_DEFAULT_LOCALE` | `en` | `en` or `ko`. Used when neither `?lang=`, a cookie, nor the browser's `Accept-Language` picks one |
 | `NOROSHI_THEME` | `tokyonight` | Colour theme: `tokyonight` (Catppuccin Latte when the system is in light mode), `ink` (also follows the system), `dancheong`, or `klein`. Visitors can switch with `?theme=` |
+| `NOROSHI_MODE` | `system` | `light` or `dark` starts visitors in that mode until they pick one with the toggle; `system` follows the device setting |
 | `NOROSHI_DEV_NO_AUTH` | `false` | Turns off admin authentication |
 | `NOROSHI_DEV_EMAIL` | | Email of the dev-mode user, to try `admin.gravatar` without a provider |
 | `NOROSHI_LOG_LEVEL` | `info` | |
@@ -132,6 +133,9 @@ pages:
 | Field | Where | Effect |
 | -- | -- | -- |
 | `logo` | page, `admin` | An http(s) URL, fetched once at startup, or a file path relative to the config file. svg, png, jpg, webp, gif, or ico, up to 1 MiB. Shown next to the title and used as the favicon. If it cannot be loaded, noroshi logs a warning and shows its own mark |
+| `wordmark` | page | A wide logo drawn in the title's place, at about the title's height. Loaded like `logo`. With a wordmark, `logo` is only the favicon. If the wordmark cannot be loaded, the logo and title text show instead |
+| `wordmark_dark` | page | The wordmark's version for the dark mode, such as a white one. Needs `wordmark` |
+| `show_title` | page | `false` hides the title text in the masthead, for a wordmark that already says it. The browser tab and the image's alt text keep the title. On by default |
 | `title` | `admin` | Name in the admin masthead and browser tabs. Defaults to `noroshi` |
 | `gravatar` | `admin` | `true` shows each admin's Gravatar, found by a SHA-256 hash of the email in the ID token. Browsers then load those images from gravatar.com. Off by default |
 | `powered_by` | `footer` | `false` hides "Powered by noroshi" and the source link at the bottom of every page. On by default |

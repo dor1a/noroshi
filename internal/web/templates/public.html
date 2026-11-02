@@ -2,9 +2,11 @@
 {{template "head" .}}
 <main class="sheet">
   <header class="mast">
-    <span class="brand{{if .Logo}} with-logo{{end}}">
-      {{with .Logo}}<img class="logo" src="{{.}}" alt="">{{end}}
-      <span class="title">{{.Title}}</span>
+    <span class="brand{{if and .Logo (not .Brand.Wordmark)}} with-logo{{end}}">
+      {{if not .Brand.Wordmark}}{{with .Logo}}<img class="logo" src="{{.}}" alt="">{{end}}{{end}}
+      {{- with .Brand.Wordmark}}<img class="wordmark{{if $.Brand.WordmarkDark}} wordmark-light{{end}}" src="{{.}}" alt="{{$.Title}}">{{end}}
+      {{- with .Brand.WordmarkDark}}<img class="wordmark wordmark-dark" src="{{.}}" alt="{{$.Title}}">{{end}}
+      {{if .Brand.ShowTitle}}<span class="title">{{.Title}}</span>{{end}}
       {{if .Private}}<span class="tag">{{t .Locale "page.private"}}</span>{{end}}
     </span>
     <nav class="nav">
@@ -158,9 +160,11 @@
 {{template "head" .}}
 <main class="sheet">
   <header class="mast">
-    <a class="brand{{if .Logo}} with-logo{{end}}" href="{{.Home}}">
-      {{with .Logo}}<img class="logo" src="{{.}}" alt="">{{end}}
-      <span class="title">{{.PageTitle}}</span>
+    <a class="brand{{if and .Logo (not .Brand.Wordmark)}} with-logo{{end}}" href="{{.Home}}">
+      {{if not .Brand.Wordmark}}{{with .Logo}}<img class="logo" src="{{.}}" alt="">{{end}}{{end}}
+      {{- with .Brand.Wordmark}}<img class="wordmark{{if $.Brand.WordmarkDark}} wordmark-light{{end}}" src="{{.}}" alt="{{$.PageTitle}}">{{end}}
+      {{- with .Brand.WordmarkDark}}<img class="wordmark wordmark-dark" src="{{.}}" alt="{{$.PageTitle}}">{{end}}
+      {{if .Brand.ShowTitle}}<span class="title">{{.PageTitle}}</span>{{end}}
     </a>
     <nav class="nav">
       <a href="{{.Home}}">{{t .Locale "incident.back"}}</a>

@@ -164,6 +164,19 @@ func serve() error {
 				meta.Logo = web.DefaultLogo()
 			}
 		}
+		// Without its wordmark the page shows its title text, as before.
+		if p.Wordmark != "" {
+			if meta.Wordmark, err = logo(p.Wordmark); err != nil {
+				log.Warn("page wordmark unavailable, showing the title", "page", p.Key, "err", err)
+			}
+		}
+		if p.WordmarkDark != "" && meta.Wordmark != nil {
+			if meta.WordmarkDark, err = logo(p.WordmarkDark); err != nil {
+				log.Warn("page dark wordmark unavailable, using the light one", "page", p.Key, "err", err)
+			}
+		}
+		// A wordmark that failed to load brings the title back.
+		meta.HideTitle = !p.TitleShown() && (p.Wordmark == "" || meta.Wordmark != nil)
 		pageMeta[p.Key] = meta
 	}
 	admin := web.AdminMeta{Title: file.Admin.Title, Gravatar: file.Admin.Gravatar}

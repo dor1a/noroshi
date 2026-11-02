@@ -935,3 +935,50 @@ func TestRecordedIn(t *testing.T) {
 		t.Error("no links")
 	}
 }
+
+func TestWordmark(t *testing.T) {
+	s := newTestServer(t)
+	plain := render(t, s, "page", s.pageView(samplePage(), "en", "", false, false))
+	if !strings.Contains(plain, `<span class="title">`) || strings.Contains(plain, "wordmark") || strings.Contains(plain, "data-default-mode") {
+		t.Fatal("a page without a wordmark or mode must render as before")
+	}
+
+	s.env.Mode = "light"
+	s.SetPages(map[string]PageMeta{"home": {
+		Logo:         &Logo{Data: []byte("ico"), ContentType: "image/x-icon", Version: "f1"},
+		Wordmark:     &Logo{Data: []byte("black"), ContentType: "image/png", Version: "l1"},
+		WordmarkDark: &Logo{Data: []byte("white"), ContentType: "image/png", Version: "d1"},
+		HideTitle:    true,
+	}})
+	out := render(t, s, "page", s.pageView(samplePage(), "en", "", false, false))
+	for _, want := range []string{
+		`data-default-mode="light"`,
+		`<img class="wordmark wordmark-light" src="/p/home/wordmark?v=l1"`,
+		`<img class="wordmark wordmark-dark" src="/p/home/wordmark-dark?v=d1"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("page missing %q", want)
+		}
+	}
+	if strings.Contains(out, `<span class="title">`) {
+		t.Fatal("show_title: false must drop the title text")
+	}
+	if strings.Contains(out, `class="logo"`) || !strings.Contains(out, `<link rel="icon" href="/p/home/logo?v=f1">`) {
+		t.Fatal("with a wordmark the logo is only the favicon")
+	}
+
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		s.PublicHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+	if rec := get("/p/home/wordmark?v=l1"); rec.Code != http.StatusOK || rec.Body.String() != "black" {
+		t.Fatalf("wordmark: %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := get("/p/home/wordmark-dark?v=d1"); rec.Code != http.StatusOK || rec.Body.String() != "white" {
+		t.Fatalf("dark wordmark: %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := get("/p/other/wordmark"); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing wordmark: %d", rec.Code)
+	}
+}

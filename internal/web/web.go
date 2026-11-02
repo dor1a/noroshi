@@ -114,6 +114,11 @@ const gravatarOrigin = "https://gravatar.com"
 type PageMeta struct {
 	Private bool
 	Logo    *Logo
+	// Wordmark is drawn in the title's place, and WordmarkDark instead of it
+	// in the dark mode. HideTitle drops the title text beside it.
+	Wordmark     *Logo
+	WordmarkDark *Logo
+	HideTitle    bool
 }
 
 // Logo is a page logo loaded at startup.
@@ -144,6 +149,25 @@ func (s *Server) logoURL(key string) string {
 		return "/p/" + key + "/logo?v=" + l.Version
 	}
 	return ""
+}
+
+// brand is how a page names itself in the masthead: an optional wordmark
+// (with a dark-mode version) and whether the title text shows.
+type brand struct {
+	Wordmark, WordmarkDark string
+	ShowTitle              bool
+}
+
+func (s *Server) brand(key string) brand {
+	meta := s.pages[key]
+	b := brand{ShowTitle: !meta.HideTitle}
+	if l := meta.Wordmark; l != nil {
+		b.Wordmark = "/p/" + key + "/wordmark?v=" + l.Version
+	}
+	if l := meta.WordmarkDark; l != nil {
+		b.WordmarkDark = "/p/" + key + "/wordmark-dark?v=" + l.Version
+	}
+	return b
 }
 
 type viewKey struct{}
@@ -189,7 +213,8 @@ func New(st *store.Store, a *auth.Auth, m *metrics.Metrics, leader Leader, env c
 		sender:   notify.NewSender(),
 	}
 	tpl, err := template.New("").Funcs(funcs).Funcs(template.FuncMap{
-		"poweredBy": func() bool { return !s.hideCredit },
+		"poweredBy":   func() bool { return !s.hideCredit },
+		"defaultMode": func() string { return s.env.Mode },
 	}).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, err
@@ -546,6 +571,8 @@ func (s *Server) PublicHandler() http.Handler {
 	mux.HandleFunc("GET /p/{key}/live", s.handleLive)
 	mux.HandleFunc("GET /p/{key}/incidents/{id}", s.handlePublicIncident)
 	mux.HandleFunc("GET /p/{key}/logo", s.handleLogo)
+	mux.HandleFunc("GET /p/{key}/wordmark", s.handleWordmark)
+	mux.HandleFunc("GET /p/{key}/wordmark-dark", s.handleWordmark)
 	mux.HandleFunc("GET /api/v1/pages/{key}", s.handleAPI)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, r, http.StatusNotFound, i18n.T(s.locale(w, r), "page.notfound"))
@@ -600,6 +627,8 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.Handle("GET /p/{key}/live", viewer(s.handleLive))
 	mux.Handle("GET /p/{key}/incidents/{id}", viewer(s.handlePublicIncident))
 	mux.Handle("GET /p/{key}/logo", viewer(s.handleLogo))
+	mux.Handle("GET /p/{key}/wordmark", viewer(s.handleWordmark))
+	mux.Handle("GET /p/{key}/wordmark-dark", viewer(s.handleWordmark))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin", http.StatusFound)
 	})
@@ -778,6 +807,7 @@ type pageView struct {
 	Theme     string
 	DocTitle  string
 	Title     string
+	Brand     brand
 	Logo      string
 	Favicon   string
 	Home      string
@@ -896,7 +926,7 @@ func (s *Server) pageView(d *pageData, locale, theme string, multi, admin bool) 
 	title := d.Page.Title.Get(locale)
 	v := pageView{
 		Locale: locale, Theme: theme, DocTitle: docTitle(title, i18n.T(locale, "page.doc")), Title: title, Multi: multi,
-		Logo: s.logoURL(d.Page.Key), Home: "/", Private: s.private(d.Page.Key),
+		Logo: s.logoURL(d.Page.Key), Brand: s.brand(d.Page.Key), Home: "/", Private: s.private(d.Page.Key),
 		LivePath: "/p/" + d.Page.Key + "/live?lang=" + locale,
 		Window:   Window, Overall: d.Overall, UpdatedAt: d.UpdatedAt, Loc: d.Loc,
 	}

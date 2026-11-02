@@ -1,12 +1,14 @@
 // Light/dark toggle. Loaded in <head> without defer so a stored choice is
-// applied before the first paint. With no stored choice the page follows the
-// system setting, and picking the mode the system is already in clears the
-// stored choice so the page follows it again.
+// applied before the first paint. With no stored choice the page starts in
+// NOROSHI_MODE (data-default-mode) or, without one, follows the system
+// setting. Picking that starting mode clears the stored choice.
 (function () {
   "use strict";
   var KEY = "noroshi-mode";
   var root = document.documentElement;
   var media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var preset = root.getAttribute("data-default-mode");
+  if (preset !== "light" && preset !== "dark") preset = null;
 
   function stored() {
     try { return localStorage.getItem(KEY); } catch (e) { return null; }
@@ -18,11 +20,14 @@
   function system() {
     return media && media.matches ? "dark" : "light";
   }
+  function base() {
+    return preset || system();
+  }
   function current() {
     return root.getAttribute("data-mode") || system();
   }
 
-  apply(stored());
+  apply(stored() || preset);
 
   document.addEventListener("DOMContentLoaded", function () {
     var button = document.getElementById("mode-toggle");
@@ -36,10 +41,10 @@
     }
     button.addEventListener("click", function () {
       var next = current() === "dark" ? "light" : "dark";
-      if (next === system()) next = null;
-      apply(next);
+      var keep = next !== base();
+      apply(keep ? next : preset);
       try {
-        if (next) localStorage.setItem(KEY, next);
+        if (keep) localStorage.setItem(KEY, next);
         else localStorage.removeItem(KEY);
       } catch (e) {}
       refresh();

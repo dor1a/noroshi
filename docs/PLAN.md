@@ -83,6 +83,7 @@ Every setting comes from an environment variable. Secrets can come from a file n
 | `NOROSHI_OIDC_ADMIN_GROUP` | `noroshi-admins` | Admin when the groups claim contains this value |
 | `NOROSHI_SESSION_KEY(_FILE)` | | Signs the session cookie |
 | `NOROSHI_THEME` | `tokyonight` | Colour theme: `tokyonight` (Catppuccin Latte when the system is light), `ink` (follows the system), `dancheong`, `klein`. Visitors can try others with `?theme=` |
+| `NOROSHI_MODE` | `system` | `light` or `dark` to start in that mode until a visitor picks one; `system` follows the device |
 | `NOROSHI_DEFAULT_LOCALE` | `en` | `en` or `ko`. Used when `?lang=`, the cookie, and the browser language all give nothing |
 
 YAML example (`pending`: schema not final):

@@ -1,6 +1,6 @@
 {{define "head" -}}
 <!doctype html>
-<html lang="{{.Locale}}"{{with .Theme}} data-theme="{{.}}"{{end}}>
+<html lang="{{.Locale}}"{{with .Theme}} data-theme="{{.}}"{{end}}{{with defaultMode}} data-default-mode="{{.}}"{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

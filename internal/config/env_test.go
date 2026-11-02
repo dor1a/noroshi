@@ -30,3 +30,18 @@ func TestResultRetention(t *testing.T) {
 		}
 	}
 }
+
+func TestMode(t *testing.T) {
+	t.Setenv("NOROSHI_DATABASE_URL", "postgres://x")
+	t.Setenv("NOROSHI_DEV_NO_AUTH", "1")
+	for value, want := range map[string]string{"": "", "system": "", "light": "light", "dark": "dark"} {
+		t.Setenv("NOROSHI_MODE", value)
+		if e, err := LoadEnv(); err != nil || e.Mode != want {
+			t.Errorf("%q: mode %q, error %v", value, e.Mode, err)
+		}
+	}
+	t.Setenv("NOROSHI_MODE", "dim")
+	if _, err := LoadEnv(); err == nil || !strings.Contains(err.Error(), "NOROSHI_MODE") {
+		t.Errorf("an unknown mode must be refused: %v", err)
+	}
+}

@@ -141,10 +141,20 @@ type Page struct {
 	Timezone   string    `yaml:"timezone" json:"timezone"`
 	Visibility string    `yaml:"visibility" json:"-"`
 	Logo       string    `yaml:"logo" json:"-"`
-	Alert      *bool     `yaml:"alert" json:"-"`
-	Notify     []string  `yaml:"notify" json:"-"`
-	Groups     []Group   `yaml:"groups" json:"groups"`
+	// Wordmark is a wide logo drawn in the title's place, and WordmarkDark
+	// its version for the dark mode. Both load like Logo.
+	Wordmark     string `yaml:"wordmark" json:"-"`
+	WordmarkDark string `yaml:"wordmark_dark" json:"-"`
+	// ShowTitle false hides the title text in the masthead. The browser
+	// tab and the wordmark's alt text keep it.
+	ShowTitle *bool    `yaml:"show_title" json:"-"`
+	Alert     *bool    `yaml:"alert" json:"-"`
+	Notify    []string `yaml:"notify" json:"-"`
+	Groups    []Group  `yaml:"groups" json:"groups"`
 }
+
+// TitleShown reports whether the masthead shows the title text.
+func (p Page) TitleShown() bool { return p.ShowTitle == nil || *p.ShowTitle }
 
 // Private reports whether the page is hidden from the public listener.
 func (p Page) Private() bool { return p.Visibility == VisibilityPrivate }
@@ -354,6 +364,8 @@ func LoadFile(path string) (*File, error) {
 	resolve(&f.Admin.Logo)
 	for i := range f.Pages {
 		resolve(&f.Pages[i].Logo)
+		resolve(&f.Pages[i].Wordmark)
+		resolve(&f.Pages[i].WordmarkDark)
 	}
 	return f, nil
 }
@@ -529,6 +541,15 @@ func (f *File) validate() error {
 		}
 		if err := checkLogo(p.Logo); err != "" {
 			bad(pw, "%s", err)
+		}
+		if err := checkLogo(p.Wordmark); err != "" {
+			bad(pw, "wordmark: %s", err)
+		}
+		if err := checkLogo(p.WordmarkDark); err != "" {
+			bad(pw, "wordmark_dark: %s", err)
+		}
+		if p.WordmarkDark != "" && p.Wordmark == "" {
+			bad(pw, "wordmark_dark needs a wordmark for the light mode")
 		}
 		for _, k := range p.Notify {
 			if !notifierKeys[k] {

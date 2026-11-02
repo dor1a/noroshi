@@ -36,9 +36,12 @@ type Env struct {
 
 	DefaultLocale string
 	Theme         string
-	DevNoAuth     bool
-	DevEmail      string
-	LogLevel      string
+	// Mode is the light or dark mode a visitor starts in until they pick
+	// one: "light", "dark", or "" to follow the system setting.
+	Mode      string
+	DevNoAuth bool
+	DevEmail  string
+	LogLevel  string
 
 	// ResultRetention is how long raw check results are kept, and so how
 	// far back the check pages reach.
@@ -84,6 +87,14 @@ func LoadEnv() (Env, error) {
 			errs = append(errs, fmt.Errorf("NOROSHI_DEV_NO_AUTH: %w", err))
 		}
 		e.DevNoAuth = b
+	}
+
+	switch v := get("NOROSHI_MODE"); v {
+	case "", "system":
+	case "light", "dark":
+		e.Mode = v
+	default:
+		errs = append(errs, fmt.Errorf("NOROSHI_MODE must be system, light, or dark, got %s", v))
 	}
 
 	e.ResultRetention = DefaultResultRetention

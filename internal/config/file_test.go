@@ -338,10 +338,15 @@ pages:
 	if f.Pages[0].Private() {
 		t.Fatal("pages are public by default")
 	}
+	if !f.Pages[0].TitleShown() {
+		t.Fatal("pages show their title by default")
+	}
 
 	for yaml, want := range map[string]string{
 		"pages:\n  - key: a\n    title: A\n    visibility: secret\n":                       "visibility must be public or private",
 		"pages:\n  - key: a\n    title: A\n    logo: logo.bmp\n":                           "logo must be",
+		"pages:\n  - key: a\n    title: A\n    wordmark: w.bmp\n":                          "wordmark: logo must be",
+		"pages:\n  - key: a\n    title: A\n    wordmark_dark: w.png\n":                     "wordmark_dark needs a wordmark",
 		"admin:\n  logo: logo.bmp\npages:\n  - key: a\n    title: A\n":                     "admin: logo must be",
 		"admin:\n  logo: https://cdn.example.com/logo\npages:\n  - key: a\n    title: A\n": "admin: logo must be",
 		"admin:\n  logo: https:///logo.png\npages:\n  - key: a\n    title: A\n":            "admin: logo is not a valid URL",

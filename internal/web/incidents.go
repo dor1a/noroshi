@@ -198,12 +198,13 @@ func (s *Server) handlePublicIncident(w http.ResponseWriter, r *http.Request) {
 	logo := s.logoURL(p.Key)
 	s.render(w, http.StatusOK, "incident", incidentPage{
 		Locale: locale, Theme: s.theme(w, r), DocTitle: docTitle(p.Title.Get(locale), in.Title),
-		PageTitle: p.Title.Get(locale), Home: home, Logo: logo, Favicon: logo, Inc: iv,
+		PageTitle: p.Title.Get(locale), Home: home, Logo: logo, Favicon: logo, Brand: s.brand(p.Key), Inc: iv,
 	})
 }
 
 type incidentPage struct {
 	Locale, Theme, DocTitle, PageTitle, Home, Logo, Favicon string
+	Brand                                                   brand
 	Inc                                                     incidentView
 }
 
@@ -215,6 +216,21 @@ func (s *Server) handleLogo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeLogo(w, meta.Logo)
+}
+
+// handleWordmark serves a page's wordmark, or its dark version under
+// /wordmark-dark. Private pages keep theirs behind sign-in.
+func (s *Server) handleWordmark(w http.ResponseWriter, r *http.Request) {
+	meta := s.pages[r.PathValue("key")]
+	l := meta.Wordmark
+	if strings.HasSuffix(r.URL.Path, "-dark") {
+		l = meta.WordmarkDark
+	}
+	if l == nil || (meta.Private && !isAdminView(r)) {
+		http.NotFound(w, r)
+		return
+	}
+	writeLogo(w, l)
 }
 
 func (s *Server) handleAdminLogo(w http.ResponseWriter, r *http.Request) {

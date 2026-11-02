@@ -251,6 +251,17 @@ time { font-variant-numeric: tabular-nums; }
 .mast .brand { display: inline-flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
 .mast .brand .title { font-size: 20px; }
 .mast .logo { width: 44px; height: 44px; border-radius: 9px; object-fit: contain; }
+/* A wordmark takes the title's place at about the title's height. The dark
+   version shows wherever the page itself is dark: the dark mode, or the
+   system's dark setting when no mode was picked. dancheong and klein stay light. */
+.mast .wordmark { display: block; height: 28px; width: auto; max-width: min(240px, 60vw); object-fit: contain; }
+.mast .wordmark-dark { display: none; }
+:root[data-mode="dark"]:not([data-theme="dancheong"]):not([data-theme="klein"]) .mast .wordmark-light { display: none; }
+:root[data-mode="dark"]:not([data-theme="dancheong"]):not([data-theme="klein"]) .mast .wordmark-dark { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-mode="light"]):not([data-theme="dancheong"]):not([data-theme="klein"]) .mast .wordmark-light { display: none; }
+  :root:not([data-mode="light"]):not([data-theme="dancheong"]):not([data-theme="klein"]) .mast .wordmark-dark { display: block; }
+}
 .tag { font-size: 11.5px; font-weight: 600; color: var(--ink-2); border: 1px solid var(--rule-strong); border-radius: 4px; padding: 0 6px; vertical-align: 1px; }
 .nav { display: flex; gap: 18px; font-size: 13.5px; color: var(--mast-sub); flex-wrap: wrap; }
 .nav a { text-decoration: none; }
