@@ -185,6 +185,17 @@ func serve() error {
 			log.Warn("admin logo unavailable, using the default", "err", err)
 		}
 	}
+	// As on a page, a wordmark that fails to load brings the logo and title back.
+	if file.Admin.Wordmark != "" {
+		if admin.Wordmark, err = logo(file.Admin.Wordmark); err != nil {
+			log.Warn("admin wordmark unavailable, showing the title", "err", err)
+		}
+	}
+	if file.Admin.WordmarkDark != "" && admin.Wordmark != nil {
+		if admin.WordmarkDark, err = logo(file.Admin.WordmarkDark); err != nil {
+			log.Warn("admin dark wordmark unavailable, using the light one", "err", err)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

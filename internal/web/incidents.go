@@ -241,6 +241,20 @@ func (s *Server) handleAdminLogo(w http.ResponseWriter, r *http.Request) {
 	writeLogo(w, s.admin.Logo)
 }
 
+// handleAdminWordmark serves the admin wordmark, or its dark version under
+// /wordmark-dark.
+func (s *Server) handleAdminWordmark(w http.ResponseWriter, r *http.Request) {
+	l := s.admin.Wordmark
+	if strings.HasSuffix(r.URL.Path, "-dark") {
+		l = s.admin.WordmarkDark
+	}
+	if l == nil {
+		http.NotFound(w, r)
+		return
+	}
+	writeLogo(w, l)
+}
+
 func writeLogo(w http.ResponseWriter, l *Logo) {
 	h := w.Header()
 	h.Set("Content-Type", l.ContentType)

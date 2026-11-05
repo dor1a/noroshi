@@ -133,8 +133,8 @@ pages:
 | Field | Where | Effect |
 | -- | -- | -- |
 | `logo` | page, `admin` | An http(s) URL, fetched once at startup, or a file path relative to the config file. svg, png, jpg, webp, gif, or ico, up to 1 MiB. Shown next to the title and used as the favicon. If it cannot be loaded, noroshi logs a warning and shows its own mark |
-| `wordmark` | page | A wide logo drawn in the title's place, at about the title's height. Loaded like `logo`. With a wordmark, `logo` is only the favicon. If the wordmark cannot be loaded, the logo and title text show instead |
-| `wordmark_dark` | page | The wordmark's version for the dark mode, such as a white one. Needs `wordmark` |
+| `wordmark` | page, `admin` | A wide logo drawn in the title's place, at about the title's height. Loaded like `logo`. With a wordmark, `logo` is only the favicon. If the wordmark cannot be loaded, the logo and title text show instead. In the admin masthead it replaces both the logo and the title |
+| `wordmark_dark` | page, `admin` | The wordmark's version for the dark mode, such as a white one. Needs `wordmark` |
 | `show_title` | page | `false` hides the title text in the masthead, for a wordmark that already says it. The browser tab and the image's alt text keep the title. On by default |
 | `title` | `admin` | Name in the admin masthead and browser tabs. Defaults to `noroshi` |
 | `gravatar` | `admin` | `true` shows each admin's Gravatar, found by a SHA-256 hash of the email in the ID token. Browsers then load those images from gravatar.com. Off by default |

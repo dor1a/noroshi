@@ -66,9 +66,13 @@ func (f Footer) ShowPoweredBy() bool { return f.PoweredBy == nil || *f.PoweredBy
 // Admin is how the admin pages present themselves. Every field is
 // optional; without them the admin pages carry the noroshi name and mark.
 type Admin struct {
-	Title    i18n.Text `yaml:"title"`
-	Logo     string    `yaml:"logo"`
-	Gravatar bool      `yaml:"gravatar"`
+	Title i18n.Text `yaml:"title"`
+	Logo  string    `yaml:"logo"`
+	// Wordmark and WordmarkDark work as on a page: drawn in the masthead
+	// instead of the logo and the title, with Logo left as the favicon.
+	Wordmark     string `yaml:"wordmark"`
+	WordmarkDark string `yaml:"wordmark_dark"`
+	Gravatar     bool   `yaml:"gravatar"`
 }
 
 // Notifier is a chat channel that receives incident announcements. The
@@ -362,6 +366,8 @@ func LoadFile(path string) (*File, error) {
 		}
 	}
 	resolve(&f.Admin.Logo)
+	resolve(&f.Admin.Wordmark)
+	resolve(&f.Admin.WordmarkDark)
 	for i := range f.Pages {
 		resolve(&f.Pages[i].Logo)
 		resolve(&f.Pages[i].Wordmark)
@@ -518,6 +524,15 @@ func (f *File) validate() error {
 	}
 	if err := checkLogo(f.Admin.Logo); err != "" {
 		bad("admin", "%s", err)
+	}
+	if err := checkLogo(f.Admin.Wordmark); err != "" {
+		bad("admin", "wordmark: %s", err)
+	}
+	if err := checkLogo(f.Admin.WordmarkDark); err != "" {
+		bad("admin", "wordmark_dark: %s", err)
+	}
+	if f.Admin.WordmarkDark != "" && f.Admin.Wordmark == "" {
+		bad("admin", "wordmark_dark needs a wordmark for the light mode")
 	}
 	pageKeys := map[string]bool{}
 	for pi := range f.Pages {

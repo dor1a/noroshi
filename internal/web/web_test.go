@@ -100,8 +100,8 @@ func TestPublicTemplates(t *testing.T) {
 		t.Fatal("admin page list lacks the pages tab or the page link")
 	}
 	out = render(t, s, "signed_out", struct {
-		Locale, Theme, DocTitle, Brand, Logo, Favicon string
-	}{"ko", "", "x", "Example", "/admin/logo?v=1", "/admin/logo?v=1"})
+		Locale, Theme, DocTitle, Brand, Logo, Favicon, Wordmark, WordmarkDark string
+	}{"ko", "", "x", "Example", "/admin/logo?v=1", "/admin/logo?v=1", "", ""})
 	if !strings.Contains(out, "로그아웃했습니다") || !strings.Contains(out, `href="/admin"`) {
 		t.Fatal("signed-out page lacks its message or the sign-in link")
 	}
@@ -980,5 +980,49 @@ func TestWordmark(t *testing.T) {
 	}
 	if rec := get("/p/other/wordmark"); rec.Code != http.StatusNotFound {
 		t.Fatalf("missing wordmark: %d", rec.Code)
+	}
+}
+
+func TestAdminWordmark(t *testing.T) {
+	s := newTestServer(t)
+	base := adminBase{Locale: "en", DocTitle: "admin", Section: "checks", Brand: "Example", Logo: "/admin/logo?v=f1",
+		Favicon: "/admin/logo?v=f1", Wordmark: "/admin/wordmark?v=l1", WordmarkDark: "/admin/wordmark-dark?v=d1", UserName: "dev", Dev: true}
+	out := render(t, s, "admin_top", base)
+	for _, want := range []string{
+		`<img class="wordmark wordmark-light" src="/admin/wordmark?v=l1" alt="Example">`,
+		`<img class="wordmark wordmark-dark" src="/admin/wordmark-dark?v=d1" alt="Example">`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("admin masthead missing %q", want)
+		}
+	}
+	if strings.Contains(out, `class="logo"`) || strings.Contains(out, `<span class="title">`) {
+		t.Fatal("with a wordmark the admin masthead drops the logo and the title text")
+	}
+
+	s.SetAdmin(AdminMeta{
+		Logo:         &Logo{Data: []byte("ico"), ContentType: "image/x-icon", Version: "f1"},
+		Wordmark:     &Logo{Data: []byte("black"), ContentType: "image/png", Version: "l1"},
+		WordmarkDark: &Logo{Data: []byte("white"), ContentType: "image/png", Version: "d1"},
+	})
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		s.AdminHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+	if rec := get("/admin/wordmark?v=l1"); rec.Code != http.StatusOK || rec.Body.String() != "black" {
+		t.Fatalf("admin wordmark: %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := get("/admin/wordmark-dark?v=d1"); rec.Code != http.StatusOK || rec.Body.String() != "white" {
+		t.Fatalf("admin dark wordmark: %d %q", rec.Code, rec.Body.String())
+	}
+	signedOut := get("/signed-out").Body.String()
+	if !strings.Contains(signedOut, `src="/admin/wordmark?v=l1"`) || !strings.Contains(signedOut, `<link rel="icon" href="/admin/logo?v=f1">`) {
+		t.Fatal("the signed-out page shows the wordmark and keeps the logo as the favicon")
+	}
+
+	s.SetAdmin(AdminMeta{})
+	if rec := get("/admin/wordmark"); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing admin wordmark: %d", rec.Code)
 	}
 }

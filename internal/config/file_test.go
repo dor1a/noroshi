@@ -350,6 +350,8 @@ pages:
 		"admin:\n  logo: logo.bmp\npages:\n  - key: a\n    title: A\n":                     "admin: logo must be",
 		"admin:\n  logo: https://cdn.example.com/logo\npages:\n  - key: a\n    title: A\n": "admin: logo must be",
 		"admin:\n  logo: https:///logo.png\npages:\n  - key: a\n    title: A\n":            "admin: logo is not a valid URL",
+		"admin:\n  wordmark: w.bmp\npages:\n  - key: a\n    title: A\n":                    "admin: wordmark: logo must be",
+		"admin:\n  wordmark_dark: w.png\npages:\n  - key: a\n    title: A\n":               "admin: wordmark_dark needs a wordmark",
 		"pages:\n  - key: a\n    title: A\n    groups:\n      - key: g\n        name: G\n        components:\n          - key: c\n            name: C\n            checks:\n              - key: k\n                type: docker\n                container: x\n                docker_host: http://h:2375\n": "docker_host must start with",
 		"pages:\n  - key: a\n    title: A\n    groups:\n      - key: g\n        name: G\n        components:\n          - key: c\n            name: C\n            checks:\n              - key: k\n                type: docker\n":                                                                           "container must be",
 	} {
@@ -362,7 +364,7 @@ pages:
 func TestLoadFileResolvesLogo(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/config.yaml"
-	if err := os.WriteFile(path, []byte("admin:\n  title: Home\n  logo: brand/admin.svg\npages:\n  - key: a\n    title: A\n    visibility: private\n    logo: brand/logo.png\n  - key: b\n    title: B\n    logo: https://cdn.example.com/img/logo.PNG?v=2\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("admin:\n  title: Home\n  logo: brand/admin.svg\n  wordmark: brand/admin-wordmark.png\n  wordmark_dark: brand/admin-wordmark-dark.png\npages:\n  - key: a\n    title: A\n    visibility: private\n    logo: brand/logo.png\n  - key: b\n    title: B\n    logo: https://cdn.example.com/img/logo.PNG?v=2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	f, err := LoadFile(path)
@@ -380,5 +382,8 @@ func TestLoadFileResolvesLogo(t *testing.T) {
 	}
 	if f.Admin.Logo != dir+"/brand/admin.svg" || f.Admin.Title.Get("en") != "Home" {
 		t.Fatalf("admin: %+v", f.Admin)
+	}
+	if f.Admin.Wordmark != dir+"/brand/admin-wordmark.png" || f.Admin.WordmarkDark != dir+"/brand/admin-wordmark-dark.png" {
+		t.Fatalf("admin wordmarks: %+v", f.Admin)
 	}
 }

@@ -1,8 +1,7 @@
 {{define "admin_top" -}}
 <header class="mast admin-mast">
   <a class="brand" href="/admin">
-    <img class="logo" src="{{.Logo}}" alt="">
-    <span class="title">{{.Brand}}</span>
+    {{template "admin_brand" .}}
     <span class="tag">{{t .Locale "admin.badge"}}</span>
   </a>
   <div class="account">
@@ -20,13 +19,22 @@
 {{if .Dev}}<p class="notice warn">{{t .Locale "admin.dev_mode"}}</p>{{end}}
 {{- end}}
 
+{{define "admin_brand" -}}
+{{if .Wordmark -}}
+<img class="wordmark{{if .WordmarkDark}} wordmark-light{{end}}" src="{{.Wordmark}}" alt="{{.Brand}}">
+{{- with .WordmarkDark}}<img class="wordmark wordmark-dark" src="{{.}}" alt="{{$.Brand}}">{{end}}
+{{- else -}}
+<img class="logo" src="{{.Logo}}" alt="">
+<span class="title">{{.Brand}}</span>
+{{- end}}
+{{- end}}
+
 {{define "signed_out" -}}
 {{template "head" .}}
 <main class="sheet">
   <header class="mast admin-mast">
     <span class="brand">
-      <img class="logo" src="{{.Logo}}" alt="">
-      <span class="title">{{.Brand}}</span>
+      {{template "admin_brand" .}}
       <span class="tag">{{t .Locale "admin.badge"}}</span>
     </span>
     <div class="account">{{template "lang" .}}</div>

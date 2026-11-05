@@ -78,12 +78,16 @@ func (s *Server) SetFooter(poweredBy bool) { s.hideCredit = !poweredBy }
 type AdminMeta struct {
 	Title i18n.Text
 	Logo  *Logo
+	// Wordmark is drawn in the masthead instead of the logo and the title,
+	// and WordmarkDark instead of it in the dark mode. Logo stays the favicon.
+	Wordmark     *Logo
+	WordmarkDark *Logo
 	// Gravatar shows each admin's Gravatar image. The browser then asks
 	// gravatar.com for a hash of the admin's email address.
 	Gravatar bool
 }
 
-// SetAdmin records the admin title, logo, and avatar setting.
+// SetAdmin records the admin title, logo, wordmarks, and avatar setting.
 func (s *Server) SetAdmin(m AdminMeta) { s.admin = m }
 
 func (s *Server) brandTitle(locale string) string {
@@ -98,6 +102,18 @@ func (s *Server) brandLogoURL() string {
 		return "/admin/logo?v=" + l.Version
 	}
 	return asset("favicon.svg")
+}
+
+// brandWordmarkURLs are the admin wordmark and its dark version, empty when
+// the config sets none or the image failed to load.
+func (s *Server) brandWordmarkURLs() (light, dark string) {
+	if l := s.admin.Wordmark; l != nil {
+		light = "/admin/wordmark?v=" + l.Version
+	}
+	if l := s.admin.WordmarkDark; l != nil {
+		dark = "/admin/wordmark-dark?v=" + l.Version
+	}
+	return light, dark
 }
 
 // gravatarURL is the Gravatar image for an email address. d=blank returns a
@@ -593,9 +609,12 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("GET /logout", s.auth.Logout)
 	mux.HandleFunc("GET /signed-out", s.handleSignedOut)
 	mux.Handle("GET /admin", s.auth.Require(http.HandlerFunc(s.handleAdmin)))
-	// The logo needs no session: the signed-out page shows it, and a logo
-	// request that bounced through login would sign the browser back in.
+	// The logo and wordmarks need no session: the signed-out page shows them,
+	// and an image request that bounced through login would sign the browser
+	// back in.
 	mux.HandleFunc("GET /admin/logo", s.handleAdminLogo)
+	mux.HandleFunc("GET /admin/wordmark", s.handleAdminWordmark)
+	mux.HandleFunc("GET /admin/wordmark-dark", s.handleAdminWordmark)
 	mux.Handle("GET /admin/checks/{id}", s.auth.Require(http.HandlerFunc(s.handleAdminCheck)))
 	mux.Handle("GET /admin/incidents", s.auth.Require(http.HandlerFunc(s.handleIncidents)))
 	mux.Handle("GET /admin/incidents/new", s.auth.Require(http.HandlerFunc(s.handleIncidentNew)))
@@ -1143,19 +1162,21 @@ type adminRow struct {
 }
 
 type adminBase struct {
-	Locale     string
-	Theme      string
-	DocTitle   string
-	Brand      string
-	Logo       string
-	Favicon    string
-	Section    string
-	UserName   string
-	Avatar     string
-	Dev        bool
-	ProberKey  string
-	ProberText string
-	ProberLine string
+	Locale       string
+	Theme        string
+	DocTitle     string
+	Brand        string
+	Logo         string
+	Favicon      string
+	Wordmark     string
+	WordmarkDark string
+	Section      string
+	UserName     string
+	Avatar       string
+	Dev          bool
+	ProberKey    string
+	ProberText   string
+	ProberLine   string
 }
 
 func (s *Server) adminBase(w http.ResponseWriter, r *http.Request, section string) (adminBase, error) {
@@ -1166,6 +1187,7 @@ func (s *Server) adminBase(w http.ResponseWriter, r *http.Request, section strin
 		Brand: brand, Logo: s.brandLogoURL(), Section: section, Dev: s.auth.DevMode(),
 	}
 	b.Favicon = b.Logo
+	b.Wordmark, b.WordmarkDark = s.brandWordmarkURLs()
 	if u := auth.UserFrom(r.Context()); u != nil {
 		b.UserName = u.Name
 		if s.admin.Gravatar && u.Email != "" {
@@ -1320,9 +1342,10 @@ func (s *Server) handleSignedOut(w http.ResponseWriter, r *http.Request) {
 	locale := s.locale(w, r)
 	brand := s.brandTitle(locale)
 	logo := s.brandLogoURL()
+	light, dark := s.brandWordmarkURLs()
 	s.render(w, http.StatusOK, "signed_out", struct {
-		Locale, Theme, DocTitle, Brand, Logo, Favicon string
-	}{locale, s.theme(w, r), docTitle(brand, i18n.T(locale, "admin.signed_out_title")), brand, logo, logo})
+		Locale, Theme, DocTitle, Brand, Logo, Favicon, Wordmark, WordmarkDark string
+	}{locale, s.theme(w, r), docTitle(brand, i18n.T(locale, "admin.signed_out_title")), brand, logo, logo, light, dark})
 }
 
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
