@@ -37,7 +37,7 @@ services:
       - 127.0.0.1:18082:8082
 
   webhook-sink:
-    image: docker.io/library/python:3.13-alpine
+    image: docker.io/library/python:3.14-alpine
     command:
       - python
       - /sink.py
