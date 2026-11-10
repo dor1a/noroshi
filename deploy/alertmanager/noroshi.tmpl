@@ -17,6 +17,12 @@
 {{ define "noroshi.name" }}{{ or .Annotations.name .Labels.component }}{{ end }}
 {{/* Whole seconds: humanizeDuration prints fractions below a minute (55.97s). */}}
 {{ define "noroshi.downtime" }}{{ ((.EndsAt.Sub .StartsAt).Round 1000000000).Seconds | humanizeDuration }}{{ end }}
+{{/*
+  A resolved alert carries the annotations of its last firing evaluation, so
+  the response at recovery is not known. An http check that is up again reads
+  200 OK, any other check OK.
+*/}}
+{{ define "noroshi.up" }}{{ if eq .Labels.type "http" }}200 OK{{ else }}OK{{ end }}{{ end }}
 
 {{ define "noroshi.title" -}}
 {{ if eq .Status "firing" -}}
@@ -44,7 +50,7 @@
 {{ end }}Down since <t:{{ .StartsAt.Unix }}:f> (<t:{{ .StartsAt.Unix }}:R>)
 
 {{ else -}}
-**{{ .Labels.check }}**
+**{{ .Labels.check }}**: {{ template "noroshi.up" . }}
 Down for {{ template "noroshi.downtime" . }}, <t:{{ .StartsAt.Unix }}:t> → <t:{{ .EndsAt.Unix }}:t>
 
 {{ end -}}
@@ -57,7 +63,7 @@ Down for {{ template "noroshi.downtime" . }}, <t:{{ .StartsAt.Unix }}:t> → <t:
 
 {{ end -}}
 {{ range .Alerts.Resolved -}}
-✅ **{{ template "noroshi.name" . }}** › {{ .Labels.check }}
+✅ **{{ template "noroshi.name" . }}** › {{ .Labels.check }}: {{ template "noroshi.up" . }}
 Down for {{ template "noroshi.downtime" . }}, <t:{{ .StartsAt.Unix }}:t> → <t:{{ .EndsAt.Unix }}:t>
 
 {{ end -}}
@@ -79,7 +85,7 @@ Down for {{ template "noroshi.downtime" . }}, <t:{{ .StartsAt.Unix }}:t> → <t:
 {{ end }}Down since {{ template "noroshi.time" (dict "t" .StartsAt "f" "2006-01-02 15:04 MST") }}
 
 {{ else -}}
-**{{ .Labels.check }}**
+**{{ .Labels.check }}**: {{ template "noroshi.up" . }}
 
 Down for {{ template "noroshi.downtime" . }}, {{ template "noroshi.time" (dict "t" .StartsAt "f" "15:04") }} → {{ template "noroshi.time" (dict "t" .EndsAt "f" "15:04 MST") }}
 
@@ -95,7 +101,7 @@ Down for {{ template "noroshi.downtime" . }}, {{ template "noroshi.time" (dict "
 
 {{ end -}}
 {{ range .Alerts.Resolved -}}
-✅ **{{ template "noroshi.name" . }}** › {{ .Labels.check }}
+✅ **{{ template "noroshi.name" . }}** › {{ .Labels.check }}: {{ template "noroshi.up" . }}
 
 Down for {{ template "noroshi.downtime" . }}, {{ template "noroshi.time" (dict "t" .StartsAt "f" "15:04") }} → {{ template "noroshi.time" (dict "t" .EndsAt "f" "15:04 MST") }}
 
