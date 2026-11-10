@@ -36,12 +36,12 @@ func TestCheckInfoAndFailure(t *testing.T) {
 		Name: "Wiki", Target: "https://wiki.example/"}
 	m.CheckRun(l, judge.Down, time.Now(), time.Second, time.Minute, nil, nil)
 	m.CheckFailure(l, "timeout")
-	m.CheckFailure(l, "HTTP 502")
+	m.CheckFailure(l, "502 Bad Gateway")
 
 	body := scrape(t, m)
 	for _, want := range []string{
 		`noroshi_check_info{check="https",component="wiki",name="Wiki",page="p",target="https://wiki.example/"} 1`,
-		`noroshi_check_failure_info{check="https",component="wiki",page="p",reason="HTTP 502"} 1`,
+		`noroshi_check_failure_info{check="https",component="wiki",page="p",reason="502 Bad Gateway"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s", want)

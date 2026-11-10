@@ -95,7 +95,7 @@ func (r *Runner) http(ctx context.Context, c config.Check) Outcome {
 	}
 	defer resp.Body.Close()
 
-	out := Outcome{Latency: latency, Detail: fmt.Sprintf("HTTP %d", resp.StatusCode), OK: c.Accepts(resp.StatusCode)}
+	out := Outcome{Latency: latency, Detail: statusDetail(resp.StatusCode), OK: c.Accepts(resp.StatusCode)}
 	if c.Keyword != "" && out.OK {
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if err != nil {
@@ -117,6 +117,15 @@ func (r *Runner) http(ctx context.Context, c config.Check) Outcome {
 		out.Slow = true
 	}
 	return out
+}
+
+// statusDetail reads a response code as "502 Bad Gateway", or just the code
+// when Go has no text for it.
+func statusDetail(code int) string {
+	if text := http.StatusText(code); text != "" {
+		return fmt.Sprintf("%d %s", code, text)
+	}
+	return fmt.Sprint(code)
 }
 
 func (r *Runner) tcp(ctx context.Context, c config.Check) Outcome {

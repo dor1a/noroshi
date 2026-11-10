@@ -63,14 +63,14 @@ func TestHTTP(t *testing.T) {
 		ok, slow bool
 		detail   string
 	}{
-		{"200 is ok", "key: k\ntype: http\nurl: " + srv.URL + "/ok", true, false, "HTTP 200"},
-		{"500 fails", "key: k\ntype: http\nurl: " + srv.URL + "/500", false, false, "HTTP 500"},
-		{"500 accepted when expected", "key: k\ntype: http\nurl: " + srv.URL + "/500\nexpect_status: 500", true, false, "HTTP 500"},
-		{"keyword found", "key: k\ntype: http\nurl: " + srv.URL + "/ok\nkeyword: noroshi", true, false, "HTTP 200"},
-		{"keyword missing fails", "key: k\ntype: http\nurl: " + srv.URL + "/ok\nkeyword: missing", false, false, "keyword not found"},
-		{"redirect followed", "key: k\ntype: http\nurl: " + srv.URL + "/redirect", true, false, "HTTP 200"},
-		{"redirect not followed fails on 302", "key: k\ntype: http\nurl: " + srv.URL + "/redirect\nfollow_redirects: false", false, false, "HTTP 302"},
-		{"slow response is ok but slow", "key: k\ntype: http\nurl: " + srv.URL + "/slow\nslow_after: 100ms\ntimeout: 5s", true, true, "HTTP 200"},
+		{"200 is ok", "key: k\ntype: http\nurl: " + srv.URL + "/ok", true, false, "200 OK"},
+		{"500 fails", "key: k\ntype: http\nurl: " + srv.URL + "/500", false, false, "500 Internal Server Error"},
+		{"500 accepted when expected", "key: k\ntype: http\nurl: " + srv.URL + "/500\nexpect_status: 500", true, false, "500 Internal Server Error"},
+		{"keyword found", "key: k\ntype: http\nurl: " + srv.URL + "/ok\nkeyword: noroshi", true, false, "200 OK"},
+		{"keyword missing fails", "key: k\ntype: http\nurl: " + srv.URL + "/ok\nkeyword: missing", false, false, "200 OK, keyword not found"},
+		{"redirect followed", "key: k\ntype: http\nurl: " + srv.URL + "/redirect", true, false, "200 OK"},
+		{"redirect not followed fails on 302", "key: k\ntype: http\nurl: " + srv.URL + "/redirect\nfollow_redirects: false", false, false, "302 Found"},
+		{"slow response is ok but slow", "key: k\ntype: http\nurl: " + srv.URL + "/slow\nslow_after: 100ms\ntimeout: 5s", true, true, "200 OK"},
 		{"timeout fails", "key: k\ntype: http\nurl: " + srv.URL + "/hang\ntimeout: 500ms\ninterval: 10s", false, false, "timeout"},
 	}
 	for _, c := range cases {
@@ -80,6 +80,22 @@ func TestHTTP(t *testing.T) {
 				t.Fatalf("got ok=%v slow=%v detail=%q", out.OK, out.Slow, out.Detail)
 			}
 		})
+	}
+}
+
+func TestStatusDetail(t *testing.T) {
+	for code, want := range map[int]string{
+		200: "200 OK",
+		204: "204 No Content",
+		404: "404 Not Found",
+		502: "502 Bad Gateway",
+		503: "503 Service Unavailable",
+		504: "504 Gateway Timeout",
+		599: "599",
+	} {
+		if got := statusDetail(code); got != want {
+			t.Errorf("statusDetail(%d) = %q, want %q", code, got, want)
+		}
 	}
 }
 
