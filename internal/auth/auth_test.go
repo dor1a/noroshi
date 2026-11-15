@@ -22,21 +22,21 @@ func newAuth() *Auth {
 
 func TestSignVerify(t *testing.T) {
 	a := newAuth()
-	s, err := a.sign(User{Subject: "u1", Expires: time.Now().Add(time.Hour)})
+	s, err := a.sign(forSession, User{Subject: "u1", Expires: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var u User
-	if err := a.verify(s, &u); err != nil || u.Subject != "u1" {
+	if err := a.verify(forSession, s, &u); err != nil || u.Subject != "u1" {
 		t.Fatalf("round trip failed: %v %+v", err, u)
 	}
 	payload, sig, _ := strings.Cut(s, ".")
-	if err := a.verify(payload+"x."+sig, &u); err == nil {
+	if err := a.verify(forSession, payload+"x."+sig, &u); err == nil {
 		t.Fatal("tampered payload accepted")
 	}
 	other := newAuth()
 	other.env.SessionKey = []byte(strings.Repeat("z", 32))
-	if err := other.verify(s, &u); err == nil {
+	if err := other.verify(forSession, s, &u); err == nil {
 		t.Fatal("cookie signed with another key accepted")
 	}
 }
@@ -53,7 +53,7 @@ func TestRequire(t *testing.T) {
 		t.Fatalf("anonymous request should go to login, got %d %s", rec.Code, rec.Header().Get("Location"))
 	}
 
-	expired, _ := a.sign(User{Subject: "u1", Expires: time.Now().Add(-time.Minute)})
+	expired, _ := a.sign(forSession, User{Subject: "u1", Expires: time.Now().Add(-time.Minute)})
 	req := httptest.NewRequest("GET", "/admin", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: expired})
 	rec = httptest.NewRecorder()
@@ -62,7 +62,7 @@ func TestRequire(t *testing.T) {
 		t.Fatalf("expired session should go to login, got %d", rec.Code)
 	}
 
-	valid, _ := a.sign(User{Subject: "u1", Expires: time.Now().Add(time.Hour)})
+	valid, _ := a.sign(forSession, User{Subject: "u1", Expires: time.Now().Add(time.Hour)})
 	req = httptest.NewRequest("GET", "/admin", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: valid})
 	rec = httptest.NewRecorder()
@@ -114,12 +114,12 @@ func TestLogout(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	// logout ends a session that holds idToken, which may be empty when it
+	// did not fit in the cookie.
 	logout := func(a *Auth, idToken string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("GET", "/logout", nil)
-		if idToken != "" {
-			s, _ := a.sign(User{Subject: "u1", Expires: time.Now().Add(time.Hour), IDToken: idToken})
-			req.AddCookie(&http.Cookie{Name: sessionCookie, Value: s})
-		}
+		s, _ := a.sign(forSession, User{Subject: "u1", Expires: time.Now().Add(time.Hour), IDToken: idToken})
+		req := httptest.NewRequest("GET", "/logout?t="+a.mac(forLogout, s), nil)
+		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: s})
 		rec := httptest.NewRecorder()
 		a.Logout(rec, req)
 		return rec
@@ -145,9 +145,67 @@ func TestLogout(t *testing.T) {
 	if loc := logout(a, "").Header().Get("Location"); strings.Contains(loc, "post_logout_redirect_uri") || !strings.Contains(loc, "client_id=noroshi") {
 		t.Fatalf("logout without an ID token: %q", loc)
 	}
+	// Without a session nothing goes to the provider.
+	rec = httptest.NewRecorder()
+	a.Logout(rec, httptest.NewRequest("GET", "/logout", nil))
+	if loc := rec.Header().Get("Location"); loc != "/signed-out" {
+		t.Fatalf("logout without a session: %q", loc)
+	}
 
 	endSession = ""
 	if loc := logout(newProviderAuth(), "tok").Header().Get("Location"); loc != "/signed-out" {
 		t.Fatalf("provider without end_session_endpoint: %q", loc)
 	}
+}
+
+func TestLoginCookieIsNotASession(t *testing.T) {
+	a := newAuth()
+	login, _ := a.sign(forLogin, loginState{State: "s", Expires: time.Now().Add(time.Hour)})
+	ok := a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	req := httptest.NewRequest("GET", "/admin", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: login})
+	rec := httptest.NewRecorder()
+	ok.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("a login cookie passed as a session: %d", rec.Code)
+	}
+	// A session-signed value without a user is refused as well.
+	empty, _ := a.sign(forSession, User{Expires: time.Now().Add(time.Hour)})
+	req = httptest.NewRequest("GET", "/admin", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: empty})
+	rec = httptest.NewRecorder()
+	ok.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("a session without a subject passed: %d", rec.Code)
+	}
+}
+
+func TestLogoutNeedsTheSessionsToken(t *testing.T) {
+	a := newAuth()
+	s, _ := a.sign(forSession, User{Subject: "u1", Expires: time.Now().Add(time.Hour)})
+	var link string
+	a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		link = UserFrom(r.Context()).LogoutURL()
+	})).ServeHTTP(httptest.NewRecorder(), withSession(httptest.NewRequest("GET", "/admin", nil), s))
+	if link != "/logout?t="+a.mac(forLogout, s) {
+		t.Fatalf("logout link %q", link)
+	}
+	other, _ := a.sign(forSession, User{Subject: "u2", Expires: time.Now().Add(time.Hour)})
+	for _, target := range []string{"/logout", "/logout?t=", "/logout?t=forged", "/logout?t=" + a.mac(forLogout, other)} {
+		rec := httptest.NewRecorder()
+		a.Logout(rec, withSession(httptest.NewRequest("GET", target, nil), s))
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/admin" || len(rec.Result().Cookies()) != 0 {
+			t.Errorf("%s ended the session: %d %q", target, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+	rec := httptest.NewRecorder()
+	a.Logout(rec, withSession(httptest.NewRequest("GET", link, nil), s))
+	if rec.Header().Get("Location") != "/signed-out" || len(rec.Result().Cookies()) != 1 || rec.Result().Cookies()[0].MaxAge >= 0 {
+		t.Fatalf("logout with the token: %q %+v", rec.Header().Get("Location"), rec.Result().Cookies())
+	}
+}
+
+func withSession(r *http.Request, v string) *http.Request {
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: v})
+	return r
 }

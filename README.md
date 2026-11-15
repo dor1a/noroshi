@@ -73,6 +73,8 @@ The OIDC redirect URI to register with your provider is `<NOROSHI_ADMIN_URL>/oau
 
 Signing out sends the browser to the provider's `end_session_endpoint` when discovery lists one, so the provider session ends too and the next visit asks for a login again. Register `<NOROSHI_ADMIN_URL>/signed-out` as a post-logout redirect URI to come back to noroshi afterwards. Whether the provider ends its own session depends on its logout settings: in authentik, give the provider an invalidation flow with a User Logout stage, such as `default-invalidation-flow`.
 
+The sign-out link in the admin masthead carries a token tied to the session, so a link to `/logout` from another page does not sign an admin out.
+
 Outbound HTTPS checks use the system CA bundle. To trust a private CA, mount a bundle and set `SSL_CERT_FILE`.
 
 ### Config file

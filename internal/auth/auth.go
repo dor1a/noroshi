@@ -44,7 +44,25 @@ type User struct {
 
 	// IDToken is sent back to the provider as id_token_hint on logout.
 	IDToken string `json:"idt,omitempty"`
+
+	// logout is the token the logout link carries, set by Require.
+	logout string
 }
+
+// LogoutURL is the logout link. Its token is tied to this session, so
+// another site cannot log the admin out with a link of its own.
+func (u *User) LogoutURL() string {
+	return "/logout?t=" + url.QueryEscape(u.logout)
+}
+
+// What a signed value is for. The purpose is part of the signature, so a
+// value signed for one use is rejected for another: a login cookie, which
+// anyone gets from /login, never passes as a session.
+const (
+	forLogin   = "login"
+	forSession = "session"
+	forLogout  = "logout"
+)
 
 type ctxKey struct{}
 
@@ -143,7 +161,7 @@ func (a *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		Next:     safeNext(r.URL.Query().Get("next")),
 		Expires:  time.Now().Add(loginTTL),
 	}
-	v, err := a.sign(ls)
+	v, err := a.sign(forLogin, ls)
 	if err != nil {
 		a.OnErr(w, r, http.StatusInternalServerError, "error.login_failed")
 		return
@@ -161,7 +179,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 	var ls loginState
 	c, err := r.Cookie(loginCookie)
-	if err != nil || a.verify(c.Value, &ls) != nil || time.Now().After(ls.Expires) {
+	if err != nil || a.verify(forLogin, c.Value, &ls) != nil || time.Now().After(ls.Expires) {
 		a.OnErr(w, r, http.StatusBadRequest, "error.login_failed")
 		return
 	}
@@ -206,11 +224,11 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 		Expires: time.Now().Add(sessionTTL),
 		IDToken: raw,
 	}
-	v, err := a.sign(u)
+	v, err := a.sign(forSession, u)
 	if err == nil && len(v) > maxSessionCookie {
 		a.log.Warn("id token too large for the session cookie; logout will not end the provider session cleanly", "bytes", len(raw))
 		u.IDToken = ""
-		v, err = a.sign(u)
+		v, err = a.sign(forSession, u)
 	}
 	if err != nil {
 		a.OnErr(w, r, http.StatusInternalServerError, "error.login_failed")
@@ -225,12 +243,22 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 // logout, ends the provider session as well. Otherwise the next visit to a
 // page that needs a session would sign the browser straight back in. The
 // provider sends the browser back to /signed-out, which needs no session.
+//
+// A session is ended only by its own logout link (User.LogoutURL). A link
+// without the token, such as one on another site, leaves it alone. Without a
+// session there is nothing to end at the provider either.
 func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
+	c, err := r.Cookie(sessionCookie)
 	var u User
-	if c, err := r.Cookie(sessionCookie); err == nil {
-		if a.verify(c.Value, &u) != nil {
-			u = User{}
-		}
+	if err != nil || a.verify(forSession, c.Value, &u) != nil || u.Subject == "" {
+		a.clearCookie(w, sessionCookie)
+		http.Redirect(w, r, "/signed-out", http.StatusFound)
+		return
+	}
+	if !hmac.Equal([]byte(r.URL.Query().Get("t")), []byte(a.mac(forLogout, c.Value))) {
+		a.log.Warn("logout without the session's token ignored", "sub", u.Subject)
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+		return
 	}
 	a.clearCookie(w, sessionCookie)
 	if to := a.providerLogoutURL(u.IDToken); to != "" {
@@ -276,10 +304,11 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 		}
 		var u User
 		c, err := r.Cookie(sessionCookie)
-		if err != nil || a.verify(c.Value, &u) != nil || time.Now().After(u.Expires) {
+		if err != nil || a.verify(forSession, c.Value, &u) != nil || u.Subject == "" || time.Now().After(u.Expires) {
 			http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 			return
 		}
+		u.logout = a.mac(forLogout, c.Value)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, &u)))
 	})
 }
@@ -298,19 +327,19 @@ func (a *Auth) clearCookie(w http.ResponseWriter, name string) {
 	})
 }
 
-// sign encodes v as base64(json) + "." + base64(hmac).
-func (a *Auth) sign(v any) (string, error) {
+// sign encodes v as base64(json) + "." + base64(hmac of purpose and json).
+func (a *Auth) sign(purpose string, v any) (string, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return "", err
 	}
 	payload := base64.RawURLEncoding.EncodeToString(b)
-	return payload + "." + a.mac(payload), nil
+	return payload + "." + a.mac(purpose, payload), nil
 }
 
-func (a *Auth) verify(s string, v any) error {
+func (a *Auth) verify(purpose, s string, v any) error {
 	payload, sig, ok := strings.Cut(s, ".")
-	if !ok || !hmac.Equal([]byte(sig), []byte(a.mac(payload))) {
+	if !ok || !hmac.Equal([]byte(sig), []byte(a.mac(purpose, payload))) {
 		return errors.New("bad signature")
 	}
 	b, err := base64.RawURLEncoding.DecodeString(payload)
@@ -320,9 +349,9 @@ func (a *Auth) verify(s string, v any) error {
 	return json.Unmarshal(b, v)
 }
 
-func (a *Auth) mac(payload string) string {
+func (a *Auth) mac(purpose, payload string) string {
 	h := hmac.New(sha256.New, a.env.SessionKey)
-	h.Write([]byte(payload))
+	h.Write([]byte(purpose + "\x00" + payload))
 	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 }
 

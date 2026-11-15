@@ -1173,6 +1173,7 @@ type adminBase struct {
 	Section      string
 	UserName     string
 	Avatar       string
+	LogoutURL    string
 	Dev          bool
 	ProberKey    string
 	ProberText   string
@@ -1190,6 +1191,7 @@ func (s *Server) adminBase(w http.ResponseWriter, r *http.Request, section strin
 	b.Wordmark, b.WordmarkDark = s.brandWordmarkURLs()
 	if u := auth.UserFrom(r.Context()); u != nil {
 		b.UserName = u.Name
+		b.LogoutURL = u.LogoutURL()
 		if s.admin.Gravatar && u.Email != "" {
 			b.Avatar = gravatarURL(u.Email)
 		}

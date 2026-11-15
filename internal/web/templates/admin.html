@@ -6,7 +6,7 @@
   </a>
   <div class="account">
     <span class="who" title="{{t .Locale "admin.signed_in"}} {{.UserName}}"><span class="avatar" aria-hidden="true">{{initial .UserName}}{{with .Avatar}}<img src="{{.}}" alt="" width="24" height="24">{{end}}</span>{{.UserName}}</span>
-    {{if not .Dev}}<a href="/logout">{{t .Locale "admin.logout"}}</a>{{end}}
+    {{if not .Dev}}<a href="{{.LogoutURL}}">{{t .Locale "admin.logout"}}</a>{{end}}
     {{template "lang" .}}
   </div>
   <nav class="tabs" aria-label="{{t .Locale "admin.nav_label"}}">
