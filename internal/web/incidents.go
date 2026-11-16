@@ -18,8 +18,9 @@ import (
 	"github.com/dor1a/noroshi/internal/store"
 )
 
-// PastDays is how far back the public page lists resolved incidents.
-const PastDays = 14
+// PastDays is how far back the public page lists resolved incidents. It
+// matches the uptime bars, so an incident that colors a bar is also listed.
+const PastDays = Window
 
 const (
 	adminRecentDays = 30
