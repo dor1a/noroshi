@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="internal/web/static/favicon.svg" alt="" width="96">
+<img src="internal/web/static/favicon.svg" alt="" width="200">
 
 # noroshi
 
